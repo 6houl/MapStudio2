@@ -32,6 +32,7 @@ set(PROJECT_INCLUDE_DIRECTORIES
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/collaboration
     ${PROJECT_SOURCE_DIR}/src/editor
+    ${PROJECT_SOURCE_DIR}/src/emf
     ${PROJECT_SOURCE_DIR}/src/model
     ${PROJECT_SOURCE_DIR}/src/persistence
     ${PROJECT_SOURCE_DIR}/src/ui)
@@ -40,6 +41,7 @@ add_executable(EndlessMapStudio WIN32
     src/main.cpp
     src/editor/editor_camera.cpp
     src/editor/editor_state.cpp
+    src/emf/emf_io.cpp
     src/ui/classic_ui.cpp
     src/persistence/save_workflow.cpp
     src/collaboration/collaboration_window.cpp
