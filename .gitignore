@@ -1,0 +1,41 @@
+# CMake and compiled output
+/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.idb
+*.pch
+
+# Temporary/editor output
+*.tmp
+*.tmp.*
+*.bak
+*.old
+*.orig
+*.rej
+*~
+*.log
+
+# Runtime-generated recovery and metadata
+/data/maps/backups/
+/data/maps/metadata/
+
+# Generated acceptance evidence
+/tests/acceptance/output/
+
+# Individual graphics files (not needed in repo)
+/gfx/*.egf
+
+# Test files (not needed in repo)
+/tests/
+
+# Release zip
+mapstudio2.zip
