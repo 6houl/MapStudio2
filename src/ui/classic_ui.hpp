@@ -26,4 +26,4 @@ int HitTestTabs(RECT bounds, int count, POINT point);
 void DrawCenteredText(HDC dc, HFONT font, const char* text, RECT bounds, COLORREF color = Text);
 void DrawArrowButton(HDC dc, RECT bounds, bool pointsRight, bool pressed = false);
 void DrawCloseButton(HDC dc, RECT bounds, bool pressed = false);
-}
+} // namespace classic_ui

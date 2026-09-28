@@ -1,14 +1,370 @@
 #include "collaboration_edit.hpp"
 #include <set>
 #include <stdexcept>
-namespace collaboration { namespace {
-constexpr std::uint8_t V=2;
-void W8(std::vector<std::uint8_t>&b,std::uint8_t v){b.push_back(v);} void W16(std::vector<std::uint8_t>&b,std::uint16_t v){b.push_back(v);b.push_back(v>>8);} void W32(std::vector<std::uint8_t>&b,std::uint32_t v){for(int s=0;s<32;s+=8)b.push_back(v>>s);} void W64(std::vector<std::uint8_t>&b,std::uint64_t v){for(int s=0;s<64;s+=8)b.push_back(v>>s);}
-struct R{std::span<const std::uint8_t>b;size_t p=0;bool a(std::uint8_t&v){if(p>=b.size())return false;v=b[p++];return true;}bool a(std::uint16_t&v){if(b.size()-p<2)return false;v=b[p]|b[p+1]<<8;p+=2;return true;}bool a(std::uint32_t&v){if(b.size()-p<4)return false;v=0;for(int s=0;s<32;s+=8)v|=std::uint32_t(b[p++])<<s;return true;}bool a(std::uint64_t&v){if(b.size()-p<8)return false;v=0;for(int s=0;s<64;s+=8)v|=std::uint64_t(b[p++])<<s;return true;}};
-size_t Count(const EditOperation&o){if(o.kind==EditKind::Graphics)return o.graphics.size();if(o.kind==EditKind::Flags)return o.flags.size();if(o.kind==EditKind::Entities)return o.entities.size();return 1;}
-bool Clean(const EditOperation&o){return(o.kind==EditKind::Graphics||o.graphics.empty())&&(o.kind==EditKind::Flags||o.flags.empty())&&(o.kind==EditKind::Entities||o.entities.empty());}
+namespace collaboration {
+namespace {
+constexpr std::uint8_t V = 2;
+void W8(std::vector<std::uint8_t>& b, std::uint8_t v) {
+    b.push_back(v);
 }
-std::vector<std::uint8_t> EncodeEditOperation(const EditOperation&o){std::string e;if(!ValidateEditOperation(o,254,254,e))throw std::invalid_argument(e);std::vector<std::uint8_t>b;W8(b,V);W8(b,(std::uint8_t)o.kind);W64(b,o.requestId);W32(b,(std::uint32_t)Count(o));if(o.kind==EditKind::Graphics)for(auto&x:o.graphics){W16(b,x.x);W16(b,x.y);W8(b,x.layer);W32(b,x.graphic);}else if(o.kind==EditKind::Flags)for(auto&x:o.flags){W16(b,x.x);W16(b,x.y);W16(b,x.spec);W8(b,x.hasWarp);if(x.hasWarp){W16(b,x.warp.destinationMap);W8(b,x.warp.x);W8(b,x.warp.y);W8(b,x.warp.level);W16(b,x.warp.door);}}else if(o.kind==EditKind::BaseTile)W32(b,o.baseTile);else if(o.kind==EditKind::ResizeMap){W16(b,o.width);W16(b,o.height);}else if(o.kind==EditKind::ClearGraphicLayer||o.kind==EditKind::ClearFlagCategory)W8(b,o.target);else if(o.kind==EditKind::Entities)for(auto&x:o.entities){W16(b,x.x);W16(b,x.y);W8(b,x.scopes);W64(b,x.warpGeneration);W64(b,x.signGeneration);W64(b,x.npcGeneration);W64(b,x.itemGeneration);if(x.scopes&EntityWarp){W8(b,x.hasWarp);if(x.hasWarp){W16(b,x.warp.destinationMap);W8(b,x.warp.x);W8(b,x.warp.y);W8(b,x.warp.level);W16(b,x.warp.door);}}if(x.scopes&EntitySign){W8(b,x.hasSign);if(x.hasSign){W16(b,x.sign.titleLength);W16(b,(std::uint16_t)x.sign.encodedText.size());b.insert(b.end(),x.sign.encodedText.begin(),x.sign.encodedText.end());}}if(x.scopes&EntityNpcs){W16(b,(std::uint16_t)x.npcs.size());for(auto&n:x.npcs){W16(b,n.id);W8(b,n.spawnType);W16(b,n.spawnTime);W8(b,n.amount);}}if(x.scopes&EntityItems){W16(b,(std::uint16_t)x.items.size());for(auto&i:x.items){W16(b,i.key);W8(b,i.chestSlot);W16(b,i.id);W16(b,i.spawnTime);W32(b,i.amount);}}}return b;}
-bool DecodeEditOperation(std::span<const std::uint8_t>b,EditOperation&o,std::string&e){R r{b};std::uint8_t v,k;std::uint32_t c;o={};if(!r.a(v)||v!=V||!r.a(k)||k<1||k>8||!r.a(o.requestId)||!o.requestId||!r.a(c)||!c||c>kMaxOperationBatchEntries){e="Malformed edit operation header.";return false;}o.kind=(EditKind)k;if(o.kind==EditKind::Graphics)for(unsigned j=0;j<c;++j){GraphicEdit x;std::uint32_t n;if(!r.a(x.x)||!r.a(x.y)||!r.a(x.layer)||!r.a(n)){e="Truncated graphic operation.";return false;}x.graphic=(std::int32_t)n;o.graphics.push_back(x);}else if(o.kind==EditKind::Flags)for(unsigned j=0;j<c;++j){FlagEdit x;std::uint16_t n;std::uint8_t h;if(!r.a(x.x)||!r.a(x.y)||!r.a(n)||!r.a(h)||h>1){e="Truncated flag operation.";return false;}x.spec=(std::int16_t)n;x.hasWarp=h;if(x.hasWarp&&(!r.a(x.warp.destinationMap)||!r.a(x.warp.x)||!r.a(x.warp.y)||!r.a(x.warp.level)||!r.a(x.warp.door))){e="Truncated warp operation.";return false;}o.flags.push_back(x);}else if(o.kind==EditKind::BaseTile){std::uint32_t n;if(!r.a(n)){e="Truncated base tile.";return false;}o.baseTile=(std::int32_t)n;}else if(o.kind==EditKind::ResizeMap){if(!r.a(o.width)||!r.a(o.height)){e="Truncated resize.";return false;}}else if(o.kind==EditKind::ClearGraphicLayer||o.kind==EditKind::ClearFlagCategory){if(!r.a(o.target)){e="Truncated clear.";return false;}}else if(o.kind==EditKind::Entities)for(unsigned j=0;j<c;++j){EntityEdit x;if(!r.a(x.x)||!r.a(x.y)||!r.a(x.scopes)||!r.a(x.warpGeneration)||!r.a(x.signGeneration)||!r.a(x.npcGeneration)||!r.a(x.itemGeneration)){e="Truncated entity operation.";return false;}std::uint8_t h;std::uint16_t n;if(x.scopes&EntityWarp){if(!r.a(h)||h>1){e="Malformed entity warp.";return false;}x.hasWarp=h;if(x.hasWarp&&(!r.a(x.warp.destinationMap)||!r.a(x.warp.x)||!r.a(x.warp.y)||!r.a(x.warp.level)||!r.a(x.warp.door))){e="Truncated entity warp.";return false;}}if(x.scopes&EntitySign){if(!r.a(h)||h>1){e="Malformed entity sign.";return false;}x.hasSign=h;if(x.hasSign){if(!r.a(x.sign.titleLength)||!r.a(n)||r.b.size()-r.p<n){e="Truncated entity sign.";return false;}x.sign.encodedText.assign(r.b.begin()+r.p,r.b.begin()+r.p+n);r.p+=n;}}if(x.scopes&EntityNpcs){if(!r.a(n)){e="Truncated NPC collection.";return false;}for(unsigned q=0;q<n;++q){NpcValue z;if(!r.a(z.id)||!r.a(z.spawnType)||!r.a(z.spawnTime)||!r.a(z.amount)){e="Truncated NPC collection.";return false;}x.npcs.push_back(z);}}if(x.scopes&EntityItems){if(!r.a(n)){e="Truncated item collection.";return false;}for(unsigned q=0;q<n;++q){ItemValue z;if(!r.a(z.key)||!r.a(z.chestSlot)||!r.a(z.id)||!r.a(z.spawnTime)||!r.a(z.amount)){e="Truncated item collection.";return false;}x.items.push_back(z);}}o.entities.push_back(std::move(x));}if(r.p!=b.size()){e="Edit operation contains trailing data.";return false;}return ValidateEditOperation(o,254,254,e);}
-bool ValidateEditOperation(const EditOperation&o,std::uint16_t w,std::uint16_t h,std::string&e){if(!o.requestId||!w||!h||!Clean(o)){e="Invalid or mixed edit operation metadata.";return false;}auto c=Count(o);if(!c||c>kMaxOperationBatchEntries){e="Invalid edit batch size.";return false;}std::set<std::uint64_t>s;if(o.kind==EditKind::Graphics)for(auto&x:o.graphics){if(x.x>=w||x.y>=h||x.layer>8||x.graphic<-1||x.graphic>32766){e="Graphic edit is outside supported ranges.";return false;}if(!s.insert((std::uint64_t(x.y)<<24)|(std::uint64_t(x.x)<<8)|x.layer).second){e="Duplicate graphic target.";return false;}}else if(o.kind==EditKind::Flags)for(auto&x:o.flags){if(x.x>=w||x.y>=h||x.spec<-1||x.spec>252||(x.hasWarp&&(x.warp.destinationMap>32766||x.warp.x>252||x.warp.y>252||x.warp.level>252||x.warp.door>32766))){e="Flag edit is outside supported ranges.";return false;}if(!s.insert((std::uint64_t(x.y)<<16)|x.x).second){e="Duplicate flag target.";return false;}}else if(o.kind==EditKind::BaseTile){if(o.baseTile<0||o.baseTile>32766){e="Base tile is outside supported ranges.";return false;}}else if(o.kind==EditKind::ResizeMap){if(!o.width||!o.height||o.width>254||o.height>254){e="Map dimensions are outside supported ranges.";return false;}}else if(o.kind==EditKind::ClearGraphicLayer){if(o.target>8){e="Graphic layer is outside supported ranges.";return false;}}else if(o.kind==EditKind::ClearFlagCategory){if(o.target>4){e="Flag category is outside supported ranges.";return false;}}else if(o.kind==EditKind::Entities)for(auto&x:o.entities){if(x.x>=w||x.y>=h||!x.scopes||(x.scopes&~15)||x.npcs.size()>=253||x.items.size()>=253||x.sign.encodedText.size()>32766||x.sign.titleLength>x.sign.encodedText.size()){e="Entity edit is outside supported ranges.";return false;}if(x.hasWarp&&(x.warp.destinationMap>32766||x.warp.x>252||x.warp.y>252||x.warp.level>252||x.warp.door>32766)){e="Entity warp is outside supported ranges.";return false;}for(auto&n:x.npcs)if(n.id>32766||n.spawnType>252||n.spawnTime>32766||n.amount>252){e="NPC is outside supported ranges.";return false;}for(auto&i:x.items)if(i.key>32766||i.chestSlot>252||i.id>32766||i.spawnTime>32766||i.amount>16777214){e="Item is outside supported ranges.";return false;}if(!s.insert((std::uint64_t(x.y)<<16)|x.x).second){e="Duplicate entity target.";return false;}}return true;}
+void W16(std::vector<std::uint8_t>& b, std::uint16_t v) {
+    b.push_back(v);
+    b.push_back(v >> 8);
+}
+void W32(std::vector<std::uint8_t>& b, std::uint32_t v) {
+    for (int s = 0; s < 32; s += 8)
+        b.push_back(v >> s);
+}
+void W64(std::vector<std::uint8_t>& b, std::uint64_t v) {
+    for (int s = 0; s < 64; s += 8)
+        b.push_back(v >> s);
+}
+struct R {
+    std::span<const std::uint8_t> b;
+    size_t p = 0;
+    bool a(std::uint8_t& v) {
+        if (p >= b.size())
+            return false;
+        v = b[p++];
+        return true;
+    }
+    bool a(std::uint16_t& v) {
+        if (b.size() - p < 2)
+            return false;
+        v = b[p] | b[p + 1] << 8;
+        p += 2;
+        return true;
+    }
+    bool a(std::uint32_t& v) {
+        if (b.size() - p < 4)
+            return false;
+        v = 0;
+        for (int s = 0; s < 32; s += 8)
+            v |= std::uint32_t(b[p++]) << s;
+        return true;
+    }
+    bool a(std::uint64_t& v) {
+        if (b.size() - p < 8)
+            return false;
+        v = 0;
+        for (int s = 0; s < 64; s += 8)
+            v |= std::uint64_t(b[p++]) << s;
+        return true;
+    }
+};
+size_t Count(const EditOperation& o) {
+    if (o.kind == EditKind::Graphics)
+        return o.graphics.size();
+    if (o.kind == EditKind::Flags)
+        return o.flags.size();
+    if (o.kind == EditKind::Entities)
+        return o.entities.size();
+    return 1;
+}
+bool Clean(const EditOperation& o) {
+    return (o.kind == EditKind::Graphics || o.graphics.empty()) && (o.kind == EditKind::Flags || o.flags.empty()) &&
+           (o.kind == EditKind::Entities || o.entities.empty());
+}
+} // namespace
+std::vector<std::uint8_t> EncodeEditOperation(const EditOperation& o) {
+    std::string e;
+    if (!ValidateEditOperation(o, 254, 254, e))
+        throw std::invalid_argument(e);
+    std::vector<std::uint8_t> b;
+    W8(b, V);
+    W8(b, (std::uint8_t)o.kind);
+    W64(b, o.requestId);
+    W32(b, (std::uint32_t)Count(o));
+    if (o.kind == EditKind::Graphics)
+        for (auto& x : o.graphics) {
+            W16(b, x.x);
+            W16(b, x.y);
+            W8(b, x.layer);
+            W32(b, x.graphic);
+        }
+    else if (o.kind == EditKind::Flags)
+        for (auto& x : o.flags) {
+            W16(b, x.x);
+            W16(b, x.y);
+            W16(b, x.spec);
+            W8(b, x.hasWarp);
+            if (x.hasWarp) {
+                W16(b, x.warp.destinationMap);
+                W8(b, x.warp.x);
+                W8(b, x.warp.y);
+                W8(b, x.warp.level);
+                W16(b, x.warp.door);
+            }
+        }
+    else if (o.kind == EditKind::BaseTile)
+        W32(b, o.baseTile);
+    else if (o.kind == EditKind::ResizeMap) {
+        W16(b, o.width);
+        W16(b, o.height);
+    } else if (o.kind == EditKind::ClearGraphicLayer || o.kind == EditKind::ClearFlagCategory)
+        W8(b, o.target);
+    else if (o.kind == EditKind::Entities)
+        for (auto& x : o.entities) {
+            W16(b, x.x);
+            W16(b, x.y);
+            W8(b, x.scopes);
+            W64(b, x.warpGeneration);
+            W64(b, x.signGeneration);
+            W64(b, x.npcGeneration);
+            W64(b, x.itemGeneration);
+            if (x.scopes & EntityWarp) {
+                W8(b, x.hasWarp);
+                if (x.hasWarp) {
+                    W16(b, x.warp.destinationMap);
+                    W8(b, x.warp.x);
+                    W8(b, x.warp.y);
+                    W8(b, x.warp.level);
+                    W16(b, x.warp.door);
+                }
+            }
+            if (x.scopes & EntitySign) {
+                W8(b, x.hasSign);
+                if (x.hasSign) {
+                    W16(b, x.sign.titleLength);
+                    W16(b, (std::uint16_t)x.sign.encodedText.size());
+                    b.insert(b.end(), x.sign.encodedText.begin(), x.sign.encodedText.end());
+                }
+            }
+            if (x.scopes & EntityNpcs) {
+                W16(b, (std::uint16_t)x.npcs.size());
+                for (auto& n : x.npcs) {
+                    W16(b, n.id);
+                    W8(b, n.spawnType);
+                    W16(b, n.spawnTime);
+                    W8(b, n.amount);
+                }
+            }
+            if (x.scopes & EntityItems) {
+                W16(b, (std::uint16_t)x.items.size());
+                for (auto& i : x.items) {
+                    W16(b, i.key);
+                    W8(b, i.chestSlot);
+                    W16(b, i.id);
+                    W16(b, i.spawnTime);
+                    W32(b, i.amount);
+                }
+            }
+        }
+    return b;
+}
+bool DecodeEditOperation(std::span<const std::uint8_t> b, EditOperation& o, std::string& e) {
+    R r{b};
+    std::uint8_t v, k;
+    std::uint32_t c;
+    o = {};
+    if (!r.a(v) || v != V || !r.a(k) || k < 1 || k > 8 || !r.a(o.requestId) || !o.requestId || !r.a(c) || !c ||
+        c > kMaxOperationBatchEntries) {
+        e = "Malformed edit operation header.";
+        return false;
+    }
+    o.kind = (EditKind)k;
+    if (o.kind == EditKind::Graphics)
+        for (unsigned j = 0; j < c; ++j) {
+            GraphicEdit x;
+            std::uint32_t n;
+            if (!r.a(x.x) || !r.a(x.y) || !r.a(x.layer) || !r.a(n)) {
+                e = "Truncated graphic operation.";
+                return false;
+            }
+            x.graphic = (std::int32_t)n;
+            o.graphics.push_back(x);
+        }
+    else if (o.kind == EditKind::Flags)
+        for (unsigned j = 0; j < c; ++j) {
+            FlagEdit x;
+            std::uint16_t n;
+            std::uint8_t h;
+            if (!r.a(x.x) || !r.a(x.y) || !r.a(n) || !r.a(h) || h > 1) {
+                e = "Truncated flag operation.";
+                return false;
+            }
+            x.spec = (std::int16_t)n;
+            x.hasWarp = h;
+            if (x.hasWarp && (!r.a(x.warp.destinationMap) || !r.a(x.warp.x) || !r.a(x.warp.y) || !r.a(x.warp.level) ||
+                              !r.a(x.warp.door))) {
+                e = "Truncated warp operation.";
+                return false;
+            }
+            o.flags.push_back(x);
+        }
+    else if (o.kind == EditKind::BaseTile) {
+        std::uint32_t n;
+        if (!r.a(n)) {
+            e = "Truncated base tile.";
+            return false;
+        }
+        o.baseTile = (std::int32_t)n;
+    } else if (o.kind == EditKind::ResizeMap) {
+        if (!r.a(o.width) || !r.a(o.height)) {
+            e = "Truncated resize.";
+            return false;
+        }
+    } else if (o.kind == EditKind::ClearGraphicLayer || o.kind == EditKind::ClearFlagCategory) {
+        if (!r.a(o.target)) {
+            e = "Truncated clear.";
+            return false;
+        }
+    } else if (o.kind == EditKind::Entities)
+        for (unsigned j = 0; j < c; ++j) {
+            EntityEdit x;
+            if (!r.a(x.x) || !r.a(x.y) || !r.a(x.scopes) || !r.a(x.warpGeneration) || !r.a(x.signGeneration) ||
+                !r.a(x.npcGeneration) || !r.a(x.itemGeneration)) {
+                e = "Truncated entity operation.";
+                return false;
+            }
+            std::uint8_t h;
+            std::uint16_t n;
+            if (x.scopes & EntityWarp) {
+                if (!r.a(h) || h > 1) {
+                    e = "Malformed entity warp.";
+                    return false;
+                }
+                x.hasWarp = h;
+                if (x.hasWarp && (!r.a(x.warp.destinationMap) || !r.a(x.warp.x) || !r.a(x.warp.y) ||
+                                  !r.a(x.warp.level) || !r.a(x.warp.door))) {
+                    e = "Truncated entity warp.";
+                    return false;
+                }
+            }
+            if (x.scopes & EntitySign) {
+                if (!r.a(h) || h > 1) {
+                    e = "Malformed entity sign.";
+                    return false;
+                }
+                x.hasSign = h;
+                if (x.hasSign) {
+                    if (!r.a(x.sign.titleLength) || !r.a(n) || r.b.size() - r.p < n) {
+                        e = "Truncated entity sign.";
+                        return false;
+                    }
+                    x.sign.encodedText.assign(r.b.begin() + r.p, r.b.begin() + r.p + n);
+                    r.p += n;
+                }
+            }
+            if (x.scopes & EntityNpcs) {
+                if (!r.a(n)) {
+                    e = "Truncated NPC collection.";
+                    return false;
+                }
+                for (unsigned q = 0; q < n; ++q) {
+                    NpcValue z;
+                    if (!r.a(z.id) || !r.a(z.spawnType) || !r.a(z.spawnTime) || !r.a(z.amount)) {
+                        e = "Truncated NPC collection.";
+                        return false;
+                    }
+                    x.npcs.push_back(z);
+                }
+            }
+            if (x.scopes & EntityItems) {
+                if (!r.a(n)) {
+                    e = "Truncated item collection.";
+                    return false;
+                }
+                for (unsigned q = 0; q < n; ++q) {
+                    ItemValue z;
+                    if (!r.a(z.key) || !r.a(z.chestSlot) || !r.a(z.id) || !r.a(z.spawnTime) || !r.a(z.amount)) {
+                        e = "Truncated item collection.";
+                        return false;
+                    }
+                    x.items.push_back(z);
+                }
+            }
+            o.entities.push_back(std::move(x));
+        }
+    if (r.p != b.size()) {
+        e = "Edit operation contains trailing data.";
+        return false;
+    }
+    return ValidateEditOperation(o, 254, 254, e);
+}
+bool ValidateEditOperation(const EditOperation& o, std::uint16_t w, std::uint16_t h, std::string& e) {
+    if (!o.requestId || !w || !h || !Clean(o)) {
+        e = "Invalid or mixed edit operation metadata.";
+        return false;
+    }
+    auto c = Count(o);
+    if (!c || c > kMaxOperationBatchEntries) {
+        e = "Invalid edit batch size.";
+        return false;
+    }
+    std::set<std::uint64_t> s;
+    if (o.kind == EditKind::Graphics)
+        for (auto& x : o.graphics) {
+            if (x.x >= w || x.y >= h || x.layer > 8 || x.graphic < -1 || x.graphic > 32766) {
+                e = "Graphic edit is outside supported ranges.";
+                return false;
+            }
+            if (!s.insert((std::uint64_t(x.y) << 24) | (std::uint64_t(x.x) << 8) | x.layer).second) {
+                e = "Duplicate graphic target.";
+                return false;
+            }
+        }
+    else if (o.kind == EditKind::Flags)
+        for (auto& x : o.flags) {
+            if (x.x >= w || x.y >= h || x.spec < -1 || x.spec > 252 ||
+                (x.hasWarp && (x.warp.destinationMap > 32766 || x.warp.x > 252 || x.warp.y > 252 ||
+                               x.warp.level > 252 || x.warp.door > 32766))) {
+                e = "Flag edit is outside supported ranges.";
+                return false;
+            }
+            if (!s.insert((std::uint64_t(x.y) << 16) | x.x).second) {
+                e = "Duplicate flag target.";
+                return false;
+            }
+        }
+    else if (o.kind == EditKind::BaseTile) {
+        if (o.baseTile < 0 || o.baseTile > 32766) {
+            e = "Base tile is outside supported ranges.";
+            return false;
+        }
+    } else if (o.kind == EditKind::ResizeMap) {
+        if (!o.width || !o.height || o.width > 254 || o.height > 254) {
+            e = "Map dimensions are outside supported ranges.";
+            return false;
+        }
+    } else if (o.kind == EditKind::ClearGraphicLayer) {
+        if (o.target > 8) {
+            e = "Graphic layer is outside supported ranges.";
+            return false;
+        }
+    } else if (o.kind == EditKind::ClearFlagCategory) {
+        if (o.target > 4) {
+            e = "Flag category is outside supported ranges.";
+            return false;
+        }
+    } else if (o.kind == EditKind::Entities)
+        for (auto& x : o.entities) {
+            if (x.x >= w || x.y >= h || !x.scopes || (x.scopes & ~15) || x.npcs.size() >= 253 ||
+                x.items.size() >= 253 || x.sign.encodedText.size() > 32766 ||
+                x.sign.titleLength > x.sign.encodedText.size()) {
+                e = "Entity edit is outside supported ranges.";
+                return false;
+            }
+            if (x.hasWarp && (x.warp.destinationMap > 32766 || x.warp.x > 252 || x.warp.y > 252 || x.warp.level > 252 ||
+                              x.warp.door > 32766)) {
+                e = "Entity warp is outside supported ranges.";
+                return false;
+            }
+            for (auto& n : x.npcs)
+                if (n.id > 32766 || n.spawnType > 252 || n.spawnTime > 32766 || n.amount > 252) {
+                    e = "NPC is outside supported ranges.";
+                    return false;
+                }
+            for (auto& i : x.items)
+                if (i.key > 32766 || i.chestSlot > 252 || i.id > 32766 || i.spawnTime > 32766 || i.amount > 16777214) {
+                    e = "Item is outside supported ranges.";
+                    return false;
+                }
+            if (!s.insert((std::uint64_t(x.y) << 16) | x.x).second) {
+                e = "Duplicate entity target.";
+                return false;
+            }
+        }
+    return true;
+}
 } // namespace collaboration

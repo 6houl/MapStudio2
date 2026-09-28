@@ -97,7 +97,7 @@ struct ChatBroadcast {
     std::string text;
 };
 
-enum class ParticipantRole : std::uint8_t { Host=1, Editor=2, Viewer=3 };
+enum class ParticipantRole : std::uint8_t { Host = 1, Editor = 2, Viewer = 3 };
 struct Participant {
     std::uint32_t userId = 0;
     std::string displayName;
@@ -113,9 +113,22 @@ struct OperationBroadcast {
     std::uint32_t authorId = 0;
     std::vector<std::uint8_t> operation;
 };
-struct OperationRejection { std::uint64_t requestId=0; std::string message; };
+struct OperationRejection {
+    std::uint64_t requestId = 0;
+    std::string message;
+};
 
-enum class PresenceArea : std::uint8_t { None, Viewer, Graphics, Flags, Toolset, Layers, MapProperties, Entities, MapTogether };
+enum class PresenceArea : std::uint8_t {
+    None,
+    Viewer,
+    Graphics,
+    Flags,
+    Toolset,
+    Layers,
+    MapProperties,
+    Entities,
+    MapTogether
+};
 struct Presence {
     std::uint32_t userId = 0;
     PresenceArea area = PresenceArea::Viewer;
@@ -170,8 +183,8 @@ bool NormalizeChatText(std::string_view input, std::string& normalized, std::str
 bool NormalizeDisplayName(std::string_view input, std::string& normalized, std::string& error);
 
 std::array<std::uint8_t, kChallengeBytes> CreateChallengeNonce();
-std::array<std::uint8_t, kPasswordProofBytes> MakePasswordProof(
-    std::string_view password, std::span<const std::uint8_t, kChallengeBytes> nonce);
+std::array<std::uint8_t, kPasswordProofBytes> MakePasswordProof(std::string_view password,
+                                                                std::span<const std::uint8_t, kChallengeBytes> nonce);
 bool ConstantTimeEqual(std::span<const std::uint8_t> left, std::span<const std::uint8_t> right);
 
 } // namespace collaboration

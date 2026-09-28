@@ -29,12 +29,16 @@ struct CameraNavigationKeys {
     bool right = false;
     bool up = false;
     bool down = false;
-    bool any() const { return left || right || up || down; }
-    void clear() { left = right = up = down = false; }
+    bool any() const {
+        return left || right || up || down;
+    }
+    void clear() {
+        left = right = up = down = false;
+    }
 };
 
 class EditorCamera {
-public:
+  public:
     int centerTileX = 8;
     int centerTileY = 14;
     double offsetX = 0.0;
@@ -45,7 +49,7 @@ public:
     CameraPoint MapToScreenTop(int tileX, int tileY, const CameraViewport& viewport) const;
     CameraTile ScreenToMap(CameraPoint screen, const CameraViewport& viewport) const;
     CameraBounds ProjectedScreenBounds(int mapWidth, int mapHeight, const CameraViewport& viewport,
-        bool includeOffset = true) const;
+                                       bool includeOffset = true) const;
     CameraPoint ScreenToWorld(CameraPoint screen, const CameraViewport& viewport) const;
     CameraPoint WorldToScreen(CameraPoint world, const CameraViewport& viewport) const;
 
@@ -53,5 +57,5 @@ public:
     void ZoomAtPoint(double newZoom, CameraPoint anchor, const CameraViewport& viewport);
 };
 
-bool ApplyCameraNavigation(EditorCamera& camera, const CameraNavigationKeys& keys,
-    double elapsedSeconds, double pixelsPerSecond);
+bool ApplyCameraNavigation(EditorCamera& camera, const CameraNavigationKeys& keys, double elapsedSeconds,
+                           double pixelsPerSecond);

@@ -11,7 +11,21 @@
 namespace collaboration {
 
 enum class SessionState { Disconnected, Hosting, Connecting, Connected };
-enum class EventType { Status, ParticipantConnected, ParticipantDisconnected, SnapshotReceived, Rejected, ConnectionLost, ChatMessage, ParticipantsChanged, OperationRequested, OperationAccepted, OperationRejected, PresenceChanged, MapSaved };
+enum class EventType {
+    Status,
+    ParticipantConnected,
+    ParticipantDisconnected,
+    SnapshotReceived,
+    Rejected,
+    ConnectionLost,
+    ChatMessage,
+    ParticipantsChanged,
+    OperationRequested,
+    OperationAccepted,
+    OperationRejected,
+    PresenceChanged,
+    MapSaved
+};
 
 struct Event {
     EventType type = EventType::Status;
@@ -44,7 +58,7 @@ struct ConnectOptions {
 };
 
 class Session {
-public:
+  public:
     explicit Session(std::function<void()> wakeUi = {});
     ~Session();
     Session(const Session&) = delete;
@@ -55,13 +69,14 @@ public:
     void Disconnect(std::string reason = "Disconnected");
     bool SendChat(std::string_view text, std::string& error);
     bool SubmitOperation(std::span<const std::uint8_t> operation, std::string& error);
-    bool AcceptRequestedOperation(std::uint32_t authorId,std::span<const std::uint8_t> operation,std::string& error);
-    bool RejectRequestedOperation(std::uint32_t authorId,std::uint64_t requestId,std::string_view reason,std::string& error);
+    bool AcceptRequestedOperation(std::uint32_t authorId, std::span<const std::uint8_t> operation, std::string& error);
+    bool RejectRequestedOperation(std::uint32_t authorId, std::uint64_t requestId, std::string_view reason,
+                                  std::string& error);
     bool SendPresence(Presence presence, std::string& error);
     bool BroadcastSave(std::uint64_t unixTimestamp, std::string& error);
-    bool ChangeParticipantRole(std::uint32_t userId,ParticipantRole role,std::string& error);
-    bool DisconnectParticipant(std::uint32_t userId,std::string& error);
-    bool SetPassword(std::string password,std::string& error);
+    bool ChangeParticipantRole(std::uint32_t userId, ParticipantRole role, std::string& error);
+    bool DisconnectParticipant(std::uint32_t userId, std::string& error);
+    bool SetPassword(std::string password, std::string& error);
 
     SessionState State() const;
     std::size_t ConnectedGuestCount() const;
@@ -77,7 +92,7 @@ public:
     std::uint64_t PresencePacketsReceived() const;
     std::vector<Event> DrainEvents();
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

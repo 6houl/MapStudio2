@@ -8,21 +8,23 @@ void DrawCenteredText(HDC dc, HFONT font, const char* text, RECT bounds, COLORRE
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, color);
     DrawTextA(dc, text, -1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    if (oldFont) SelectObject(dc, oldFont);
+    if (oldFont)
+        SelectObject(dc, oldFont);
 }
 
 void DrawTabs(HDC dc, HFONT font, RECT bounds, const char* const* labels, int count, int active) {
-    if (count <= 0) return;
+    if (count <= 0)
+        return;
     const int width = std::max(18, static_cast<int>(bounds.right - bounds.left) / count);
     const HGDIOBJ oldFont = font ? SelectObject(dc, font) : nullptr;
     SetBkMode(dc, TRANSPARENT);
     for (int index = 0; index < count; ++index) {
         const int left = bounds.left + index * width;
         const int right = index == count - 1 ? bounds.right : bounds.left + (index + 1) * width;
-        POINT shape[] = {
-            { left, bounds.bottom - 1 }, { left + 4, bounds.top + 1 },
-            { right - 4, bounds.top + 1 }, { right, bounds.bottom - 1 }
-        };
+        POINT shape[] = {{left, bounds.bottom - 1},
+                         {left + 4, bounds.top + 1},
+                         {right - 4, bounds.top + 1},
+                         {right, bounds.bottom - 1}};
         HBRUSH fill = CreateSolidBrush(index == active ? Content : Control);
         HPEN border = CreatePen(PS_SOLID, 1, Shadow);
         HGDIOBJ oldBrush = SelectObject(dc, fill);
@@ -32,7 +34,7 @@ void DrawTabs(HDC dc, HFONT font, RECT bounds, const char* const* labels, int co
         SelectObject(dc, oldBrush);
         DeleteObject(border);
         DeleteObject(fill);
-        RECT text{ left + 5, bounds.top + 1, right - 4, bounds.bottom - 1 };
+        RECT text{left + 5, bounds.top + 1, right - 4, bounds.bottom - 1};
         DrawCenteredText(dc, font, labels[index], text);
         if (index == active) {
             HPEN seam = CreatePen(PS_SOLID, 1, Content);
@@ -43,18 +45,21 @@ void DrawTabs(HDC dc, HFONT font, RECT bounds, const char* const* labels, int co
             DeleteObject(seam);
         }
     }
-    if (oldFont) SelectObject(dc, oldFont);
+    if (oldFont)
+        SelectObject(dc, oldFont);
 }
 
 int HitTestTabs(RECT bounds, int count, POINT point) {
-    if (count <= 0 || point.y < bounds.top || point.y >= bounds.bottom) return -1;
+    if (count <= 0 || point.y < bounds.top || point.y >= bounds.bottom)
+        return -1;
     const int width = std::max(18, static_cast<int>(bounds.right - bounds.left) / count);
     const int height = std::max(1, static_cast<int>(bounds.bottom - bounds.top));
     const int inset = 4 * (bounds.bottom - point.y) / height;
     for (int index = 0; index < count; ++index) {
         const int left = bounds.left + index * width;
         const int right = index == count - 1 ? bounds.right : bounds.left + (index + 1) * width;
-        if (point.x >= left + inset && point.x < right - inset) return index;
+        if (point.x >= left + inset && point.x < right - inset)
+            return index;
     }
     return -1;
 }
@@ -67,9 +72,9 @@ void DrawArrowButton(HDC dc, RECT bounds, bool pointsRight, bool pressed) {
     const int shift = pressed ? 1 : 0;
     const int cx = (bounds.left + bounds.right) / 2 + shift;
     const int cy = (bounds.top + bounds.bottom) / 2 + shift;
-    POINT triangle[3] = { pointsRight ? POINT{cx - 2, cy - 4} : POINT{cx + 2, cy - 4},
-        pointsRight ? POINT{cx - 2, cy + 4} : POINT{cx + 2, cy + 4},
-        pointsRight ? POINT{cx + 3, cy} : POINT{cx - 3, cy} };
+    POINT triangle[3] = {pointsRight ? POINT{cx - 2, cy - 4} : POINT{cx + 2, cy - 4},
+                         pointsRight ? POINT{cx - 2, cy + 4} : POINT{cx + 2, cy + 4},
+                         pointsRight ? POINT{cx + 3, cy} : POINT{cx - 3, cy}};
     HBRUSH ink = CreateSolidBrush(Text);
     HPEN pen = CreatePen(PS_SOLID, 1, Text);
     HGDIOBJ oldBrush = SelectObject(dc, ink);
@@ -96,4 +101,4 @@ void DrawCloseButton(HDC dc, RECT bounds, bool pressed) {
     SelectObject(dc, oldPen);
     DeleteObject(pen);
 }
-}
+} // namespace classic_ui

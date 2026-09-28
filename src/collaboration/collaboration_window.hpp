@@ -15,10 +15,10 @@ struct WindowCallbacks {
     std::function<void()> startServer;
     std::function<void()> connect;
     std::function<void()> disconnect;
-    std::function<bool(std::string_view,std::string&)> sendChat;
-    std::function<bool(std::uint32_t,ParticipantRole,std::string&)> changeRole;
-    std::function<bool(std::uint32_t,std::string&)> disconnectParticipant;
-    std::function<bool(std::string,std::string&)> setPassword;
+    std::function<bool(std::string_view, std::string&)> sendChat;
+    std::function<bool(std::uint32_t, ParticipantRole, std::string&)> changeRole;
+    std::function<bool(std::uint32_t, std::string&)> disconnectParticipant;
+    std::function<bool(std::string, std::string&)> setPassword;
 };
 
 struct WindowState {
@@ -32,19 +32,19 @@ struct WindowState {
 };
 
 class Window {
-public:
-    Window(HWND owner,HFONT font,WindowCallbacks callbacks);
+  public:
+    Window(HWND owner, HFONT font, WindowCallbacks callbacks);
     ~Window();
-    Window(const Window&)=delete;
-    Window& operator=(const Window&)=delete;
+    Window(const Window&) = delete;
+    Window& operator=(const Window&) = delete;
 
     void Show();
     void Update(const WindowState& state);
     void AppendSystem(std::string text);
-    void AppendChat(std::string sender,std::string text);
+    void AppendChat(std::string sender, std::string text);
     HWND Handle() const;
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

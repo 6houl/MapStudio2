@@ -7,7 +7,7 @@ enum class EditDomain { Graphics, Flags };
 
 struct EditorState {
     int graphicsCategory = 0;
-    std::array<int, 6> selectedGraphics{ 1, 1, 1, 1, 1, 1 };
+    std::array<int, 6> selectedGraphics{1, 1, 1, 1, 1, 1};
     EditDomain editDomain = EditDomain::Graphics;
     DrawTool drawTool = DrawTool::Pencil;
     int brushSize = 1;

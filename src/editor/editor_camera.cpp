@@ -1,7 +1,5 @@
 #include "editor_camera.hpp"
 
-#include <cmath>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -11,17 +9,18 @@ constexpr double kTileHalfWidth = 32.0;
 constexpr double kTileHalfHeight = 16.0;
 
 CameraPoint ViewportCenter(const CameraViewport& viewport) {
-    return { (viewport.left + viewport.right) / 2.0, (viewport.top + viewport.bottom) / 2.0 };
+    return {(viewport.left + viewport.right) / 2.0, (viewport.top + viewport.bottom) / 2.0};
 }
 
-}
+} // namespace
 
-bool ApplyCameraNavigation(EditorCamera& camera, const CameraNavigationKeys& keys,
-    double elapsedSeconds, double pixelsPerSecond) {
+bool ApplyCameraNavigation(EditorCamera& camera, const CameraNavigationKeys& keys, double elapsedSeconds,
+                           double pixelsPerSecond) {
     double x = static_cast<double>(keys.left) - static_cast<double>(keys.right);
     double y = static_cast<double>(keys.up) - static_cast<double>(keys.down);
     const double length = std::sqrt(x * x + y * y);
-    if (length == 0.0 || elapsedSeconds <= 0.0 || pixelsPerSecond <= 0.0) return false;
+    if (length == 0.0 || elapsedSeconds <= 0.0 || pixelsPerSecond <= 0.0)
+        return false;
     const double distance = elapsedSeconds * pixelsPerSecond / length;
     camera.Pan(x * distance, y * distance);
     return true;
@@ -55,24 +54,31 @@ CameraTile EditorCamera::ScreenToMap(CameraPoint screen, const CameraViewport& v
 
 CameraPoint EditorCamera::ScreenToWorld(CameraPoint screen, const CameraViewport& viewport) const {
     const CameraPoint center = ViewportCenter(viewport);
-    return { (screen.x - center.x - offsetX) / zoom, (screen.y - center.y - offsetY) / zoom };
+    return {(screen.x - center.x - offsetX) / zoom, (screen.y - center.y - offsetY) / zoom};
 }
 
 CameraPoint EditorCamera::WorldToScreen(CameraPoint world, const CameraViewport& viewport) const {
     const CameraPoint center = ViewportCenter(viewport);
-    return { center.x + offsetX + world.x * zoom, center.y + offsetY + world.y * zoom };
+    return {center.x + offsetX + world.x * zoom, center.y + offsetY + world.y * zoom};
 }
 
-CameraBounds EditorCamera::ProjectedScreenBounds(int mapWidth, int mapHeight,
-    const CameraViewport& viewport, bool includeOffset) const {
-    if (mapWidth <= 0 || mapHeight <= 0) return {};
+CameraBounds EditorCamera::ProjectedScreenBounds(int mapWidth, int mapHeight, const CameraViewport& viewport,
+                                                 bool includeOffset) const {
+    if (mapWidth <= 0 || mapHeight <= 0)
+        return {};
     const std::array<CameraTile, 4> corners{{
-        { 0, 0 }, { mapWidth - 1, 0 }, { 0, mapHeight - 1 }, { mapWidth - 1, mapHeight - 1 },
+        {0, 0},
+        {mapWidth - 1, 0},
+        {0, mapHeight - 1},
+        {mapWidth - 1, mapHeight - 1},
     }};
-    CameraBounds bounds{ 1e30, 1e30, -1e30, -1e30 };
+    CameraBounds bounds{1e30, 1e30, -1e30, -1e30};
     for (const CameraTile& tile : corners) {
         CameraPoint point = MapToScreenCenter(tile.x, tile.y, viewport);
-        if (!includeOffset) { point.x -= offsetX; point.y -= offsetY; }
+        if (!includeOffset) {
+            point.x -= offsetX;
+            point.y -= offsetY;
+        }
         bounds.left = std::min(bounds.left, point.x - kTileHalfWidth * zoom);
         bounds.right = std::max(bounds.right, point.x + kTileHalfWidth * zoom);
         bounds.top = std::min(bounds.top, point.y - kTileHalfHeight * zoom);

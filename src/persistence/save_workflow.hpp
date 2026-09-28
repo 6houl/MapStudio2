@@ -58,20 +58,12 @@ std::filesystem::path BackupsDirectory(const std::filesystem::path& mapPath);
 std::filesystem::path MetadataDirectory(const std::filesystem::path& mapPath);
 std::filesystem::path MetadataPath(const std::filesystem::path& mapPath);
 
-bool CreateSessionBackup(
-    const std::filesystem::path& mapPath,
-    std::span<const std::uint8_t> inMemoryEmf,
-    std::filesystem::path& backupPath,
-    std::string& error,
-    FailureInjection injection = {},
-    bool useExistingSource = true);
+bool CreateSessionBackup(const std::filesystem::path& mapPath, std::span<const std::uint8_t> inMemoryEmf,
+                         std::filesystem::path& backupPath, std::string& error, FailureInjection injection = {},
+                         bool useExistingSource = true);
 
-SaveResult SaveMapFile(
-    const std::filesystem::path& mapPath,
-    std::span<const std::uint8_t> emf,
-    Metadata metadata,
-    FailureInjection injection = {},
-    const std::filesystem::path& recoverySource = {});
+SaveResult SaveMapFile(const std::filesystem::path& mapPath, std::span<const std::uint8_t> emf, Metadata metadata,
+                       FailureInjection injection = {}, const std::filesystem::path& recoverySource = {});
 
 bool ReadMetadata(const std::filesystem::path& path, Metadata& metadata, std::string& error);
 ResultPresentation BuildResultPresentation(const std::filesystem::path& path, const Metadata& metadata);
