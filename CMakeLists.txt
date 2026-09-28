@@ -32,6 +32,7 @@ set(PROJECT_INCLUDE_DIRECTORIES
     ${PROJECT_SOURCE_DIR}/src
     ${PROJECT_SOURCE_DIR}/src/collaboration
     ${PROJECT_SOURCE_DIR}/src/editor
+    ${PROJECT_SOURCE_DIR}/src/model
     ${PROJECT_SOURCE_DIR}/src/persistence
     ${PROJECT_SOURCE_DIR}/src/ui)
 
