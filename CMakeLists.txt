@@ -42,6 +42,7 @@ add_executable(EndlessMapStudio WIN32
     src/main.cpp
     src/editor/editor_camera.cpp
     src/editor/editor_state.cpp
+    src/editor/edit_history.cpp
     src/emf/emf_io.cpp
     src/graphics/gfx_assets.cpp
     src/ui/classic_ui.cpp

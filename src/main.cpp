@@ -32,6 +32,7 @@
 #include "collaboration/collaboration_window.hpp"
 #include "editor_camera.hpp"
 #include "editor_state.hpp"
+#include "edit_history.hpp"
 #include "emf/emf_io.hpp"
 #include "graphics/gfx_assets.hpp"
 #include "model/map_document.hpp"
@@ -201,9 +202,7 @@ std::array<bool, 16> g_layerVisible = [] {
 std::array<bool, 5> g_flagVisible{true, true, true, true, true};
 std::array<bool, 5> g_boundaryVisible{false, false, false, false, false};
 SIZE g_previousClientSize{};
-std::vector<MapDocument> g_undoMaps;
-std::vector<MapDocument> g_redoMaps;
-std::optional<MapDocument> g_strokeBefore;
+EditHistory g_editHistory;
 std::vector<HBITMAP> g_menuBitmaps;
 struct EntityDraft {
     int x = -1;
@@ -226,7 +225,6 @@ std::array<HWND, 5> g_entityItemEdits{};
 HWND g_entityNpcList = nullptr;
 HWND g_entityItemList = nullptr;
 std::array<HWND, 15> g_entityButtons{};
-constexpr int kMaxUndoSteps = 64;
 std::unique_ptr<collaboration::Session> g_collaboration;
 std::unique_ptr<collaboration::Window> g_collaborationWindow;
 std::uint64_t g_nextCollaborationRequestId = 1;
@@ -1352,51 +1350,32 @@ void UpdateToolMenuChecks() {
 }
 
 void CommitStroke() {
-    if (!g_strokeBefore) {
-        return;
-    }
-    g_undoMaps.push_back(std::move(*g_strokeBefore));
-    g_strokeBefore.reset();
-    if (g_undoMaps.size() > kMaxUndoSteps) {
-        g_undoMaps.erase(g_undoMaps.begin());
-    }
-    g_redoMaps.clear();
+    g_editHistory.CommitStroke();
 }
 
 void BeginEditSnapshot() {
-    if (!g_strokeBefore) {
-        g_strokeBefore = g_map;
-    }
+    g_editHistory.BeginStroke(g_map);
 }
 
 void PushUndoSnapshot() {
-    CommitStroke();
-    g_undoMaps.push_back(g_map);
-    if (g_undoMaps.size() > kMaxUndoSteps) {
-        g_undoMaps.erase(g_undoMaps.begin());
-    }
-    g_redoMaps.clear();
+    g_editHistory.Push(g_map);
 }
 
 void UndoMap() {
-    CommitStroke();
-    if (g_undoMaps.empty())
+    g_editHistory.CommitStroke();
+    if (!g_editHistory.CanUndo())
         return;
-    g_redoMaps.push_back(g_map);
-    g_map = std::move(g_undoMaps.back());
-    g_undoMaps.pop_back();
+    g_map = g_editHistory.Undo(g_map);
     g_map.dirty = true;
     UpdateMapTitle();
     InvalidatePanels();
 }
 
 void RedoMap() {
-    CommitStroke();
-    if (g_redoMaps.empty())
+    g_editHistory.CommitStroke();
+    if (!g_editHistory.CanRedo())
         return;
-    g_undoMaps.push_back(g_map);
-    g_map = std::move(g_redoMaps.back());
-    g_redoMaps.pop_back();
+    g_map = g_editHistory.Redo(g_map);
     g_map.dirty = true;
     UpdateMapTitle();
     InvalidatePanels();
@@ -3990,8 +3969,7 @@ void OpenMap(HWND owner) {
         g_camera.offsetX = 0.0;
         g_camera.offsetY = 0.0;
         g_camera.zoom = 1.0;
-        g_undoMaps.clear();
-        g_redoMaps.clear();
+        g_editHistory.Clear();
         UpdateMapTitle();
         if (!g_panels.empty())
             UpdateViewerScrollbars(g_panels[static_cast<std::size_t>(PanelKind::Viewer)]);
@@ -4382,9 +4360,7 @@ void CloseMap(HWND owner) {
         }
     }
     g_map = MapDocument{};
-    g_undoMaps.clear();
-    g_redoMaps.clear();
-    g_strokeBefore.reset();
+    g_editHistory.Clear();
     g_cursorX = g_cursorY = -1;
     UpdateMapTitle();
     InvalidatePanels();
@@ -4665,8 +4641,7 @@ void ProcessCollaborationEvents(HWND owner) {
                 incoming.path.clear();
                 incoming.dirty = false;
                 g_map = std::move(incoming);
-                g_undoMaps.clear();
-                g_redoMaps.clear();
+                g_editHistory.Clear();
                 g_cursorX = std::min(8, g_map.width - 1);
                 g_cursorY = std::min(14, g_map.height - 1);
                 g_camera.centerTileX = g_cursorX;
