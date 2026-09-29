@@ -49,6 +49,7 @@ add_executable(EndlessMapStudio WIN32
     src/emf/emf_io.cpp
     src/graphics/gfx_assets.cpp
     src/ui/classic_ui.cpp
+    src/ui/panel.cpp
     src/persistence/save_workflow.cpp
     src/collaboration/collaboration_window.cpp
     ${COLLABORATION_SOURCES})

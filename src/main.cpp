@@ -39,6 +39,7 @@
 #include "graphics/gfx_assets.hpp"
 #include "model/map_document.hpp"
 #include "save_workflow.hpp"
+#include "ui/panel.hpp"
 
 #ifndef __bool_true_false_are_defined
 #define __bool_true_false_are_defined 1
@@ -46,6 +47,9 @@
 extern "C" {
 #include <eolib/data.h>
 }
+
+// Global panel state (accessible from panel.cpp)
+std::vector<HWND> g_panels;
 
 namespace {
 
@@ -117,25 +121,6 @@ constexpr double kZoomLevels[] = {0.25, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 
 
 using EditTool = DrawTool;
 
-enum class PanelKind {
-    Viewer,
-    Graphics,
-    Layers,
-    Properties,
-    Flags,
-    Toolset,
-    Entities,
-};
-
-struct PanelData {
-    PanelKind kind;
-    const char* title;
-    HDC backBufferDc = nullptr;
-    HBITMAP backBufferBitmap = nullptr;
-    HBITMAP backBufferPreviousBitmap = nullptr;
-    SIZE backBufferSize{};
-};
-
 MapDocument g_map;
 HWND g_mainWindow = nullptr;
 HMENU g_fileMenu = nullptr;
@@ -165,7 +150,6 @@ HWND g_warpYEdit = nullptr;
 HWND g_warpMapSpin = nullptr;
 HWND g_warpXSpin = nullptr;
 HWND g_warpYSpin = nullptr;
-std::vector<HWND> g_panels;
 GfxAssets g_gfx;
 HFONT g_uiFont = nullptr;
 int g_cursorX = 8;
@@ -1304,7 +1288,6 @@ void ApplyFlagToCursor();
 void ExecuteCommand(HWND window, int command);
 void UpdateViewerScrollbars(HWND viewer, bool clampCamera = true);
 void SyncMapPropertyControls();
-void EnsureEditorWindowZOrder(HWND activePalette = nullptr);
 
 void UpdateMapTitle() {
     if (!g_mainWindow) {
@@ -2829,48 +2812,8 @@ void HandleFlagsClick(HWND window, POINT point) {
     ApplyFlagToCursor();
 }
 
-void ReleasePanelBackBuffer(PanelData& panel) {
-    if (panel.backBufferDc && panel.backBufferPreviousBitmap) {
-        SelectObject(panel.backBufferDc, panel.backBufferPreviousBitmap);
-    }
-    if (panel.backBufferBitmap)
-        DeleteObject(panel.backBufferBitmap);
-    if (panel.backBufferDc)
-        DeleteDC(panel.backBufferDc);
-    panel.backBufferDc = nullptr;
-    panel.backBufferBitmap = nullptr;
-    panel.backBufferPreviousBitmap = nullptr;
-    panel.backBufferSize = SIZE{};
-}
 
-bool EnsurePanelBackBuffer(PanelData& panel, HDC target, int width, int height) {
-    if (width <= 0 || height <= 0)
-        return false;
-    if (panel.backBufferDc && panel.backBufferSize.cx == width && panel.backBufferSize.cy == height)
-        return true;
-    ReleasePanelBackBuffer(panel);
-    panel.backBufferDc = CreateCompatibleDC(target);
-    panel.backBufferBitmap = CreateCompatibleBitmap(target, width, height);
-    if (!panel.backBufferDc || !panel.backBufferBitmap) {
-        ReleasePanelBackBuffer(panel);
-        return false;
-    }
-    panel.backBufferPreviousBitmap = static_cast<HBITMAP>(SelectObject(panel.backBufferDc, panel.backBufferBitmap));
-    panel.backBufferSize = SIZE{width, height};
-    return true;
-}
 
-void EnsureEditorWindowZOrder(HWND activePalette) {
-    if (g_panels.empty())
-        return;
-    HWND viewer = g_panels[static_cast<std::size_t>(PanelKind::Viewer)];
-    if (IsWindow(viewer)) {
-        SetWindowPos(viewer, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-    if (activePalette && activePalette != viewer && IsWindow(activePalette) && IsWindowVisible(activePalette)) {
-        SetWindowPos(activePalette, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    }
-}
 
 void UpdateViewerScrollbars(HWND viewer, bool clampCamera) {
     if (!IsWindow(viewer))
