@@ -33,6 +33,7 @@
 #include "editor_camera.hpp"
 #include "editor_state.hpp"
 #include "emf/emf_io.hpp"
+#include "graphics/gfx_assets.hpp"
 #include "model/map_document.hpp"
 #include "save_workflow.hpp"
 
@@ -130,113 +131,6 @@ struct PanelData {
     HBITMAP backBufferBitmap = nullptr;
     HBITMAP backBufferPreviousBitmap = nullptr;
     SIZE backBufferSize{};
-};
-
-struct BitmapResource {
-    HBITMAP bitmap = nullptr;
-    int width = 0;
-    int height = 0;
-};
-
-class GfxAssets {
-  public:
-    ~GfxAssets() {
-        Clear();
-    }
-
-    void SetDirectory(std::filesystem::path directory) {
-        directory_ = std::move(directory);
-    }
-
-    BitmapResource Get(int bank, int resourceId) {
-        const std::uint64_t key = (static_cast<std::uint64_t>(static_cast<std::uint32_t>(bank)) << 32) |
-                                  static_cast<std::uint32_t>(resourceId);
-        const auto existing = bitmaps_.find(key);
-        if (existing != bitmaps_.end()) {
-            return existing->second;
-        }
-
-        HMODULE module = GetBank(bank);
-        BitmapResource resource;
-        if (module && resourceId > 0 && resourceId <= 0xffff) {
-            resource.bitmap = static_cast<HBITMAP>(
-                LoadImageW(module, MAKEINTRESOURCEW(resourceId), IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION));
-            if (resource.bitmap) {
-                BITMAP bitmap{};
-                if (GetObjectW(resource.bitmap, sizeof(bitmap), &bitmap) == sizeof(bitmap)) {
-                    resource.width = bitmap.bmWidth;
-                    resource.height = bitmap.bmHeight;
-                } else {
-                    DeleteObject(resource.bitmap);
-                    resource.bitmap = nullptr;
-                }
-            }
-        }
-        bitmaps_.emplace(key, resource);
-        return resource;
-    }
-
-    const std::vector<int>& GraphicIds(int bank) {
-        const auto existing = graphicIds_.find(bank);
-        if (existing != graphicIds_.end()) {
-            return existing->second;
-        }
-
-        std::vector<int> ids;
-        HMODULE module = GetBank(bank);
-        if (module) {
-            EnumResourceNamesW(
-                module, MAKEINTRESOURCEW(2),
-                [](HMODULE, LPCWSTR, LPWSTR name, LONG_PTR parameter) -> BOOL {
-                    if (IS_INTRESOURCE(name)) {
-                        const int resourceId = static_cast<int>(reinterpret_cast<ULONG_PTR>(name));
-                        if (resourceId >= 100) {
-                            reinterpret_cast<std::vector<int>*>(parameter)->push_back(resourceId - 100);
-                        }
-                    }
-                    return TRUE;
-                },
-                reinterpret_cast<LONG_PTR>(&ids));
-        }
-        std::sort(ids.begin(), ids.end());
-        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-        return graphicIds_.emplace(bank, std::move(ids)).first->second;
-    }
-
-    void Clear() {
-        for (const auto& [key, resource] : bitmaps_) {
-            if (resource.bitmap) {
-                DeleteObject(resource.bitmap);
-            }
-        }
-        bitmaps_.clear();
-        for (const auto& [bank, module] : banks_) {
-            if (module) {
-                FreeLibrary(module);
-            }
-        }
-        banks_.clear();
-        graphicIds_.clear();
-    }
-
-  private:
-    HMODULE GetBank(int bank) {
-        const auto existing = banks_.find(bank);
-        if (existing != banks_.end()) {
-            return existing->second;
-        }
-        wchar_t filename[32]{};
-        swprintf_s(filename, L"gfx%03d.egf", bank);
-        const std::filesystem::path path = directory_ / filename;
-        HMODULE module = LoadLibraryExW(path.c_str(), nullptr, 0x22);
-        banks_.emplace(bank, module);
-        return module;
-    }
-
-    std::filesystem::path directory_;
-    std::unordered_map<int, HMODULE> banks_;
-    std::unordered_map<std::uint64_t, BitmapResource> bitmaps_;
-    std::unordered_map<int, std::vector<int>> graphicIds_;
 };
 
 MapDocument g_map;
