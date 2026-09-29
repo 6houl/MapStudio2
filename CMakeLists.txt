@@ -30,6 +30,7 @@ set(COLLABORATION_SOURCES
 
 set(PROJECT_INCLUDE_DIRECTORIES
     ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}/src/acceptance
     ${PROJECT_SOURCE_DIR}/src/collaboration
     ${PROJECT_SOURCE_DIR}/src/editor
     ${PROJECT_SOURCE_DIR}/src/emf
@@ -40,6 +41,7 @@ set(PROJECT_INCLUDE_DIRECTORIES
 
 add_executable(EndlessMapStudio WIN32
     src/main.cpp
+    src/acceptance/acceptance_harness.cpp
     src/editor/editor_camera.cpp
     src/editor/editor_state.cpp
     src/editor/edit_history.cpp

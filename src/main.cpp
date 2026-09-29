@@ -30,6 +30,7 @@
 #include "collaboration/collaboration_edit.hpp"
 #include "collaboration/collaboration_session.hpp"
 #include "collaboration/collaboration_window.hpp"
+#include "acceptance/acceptance_harness.hpp"
 #include "editor_camera.hpp"
 #include "editor_state.hpp"
 #include "edit_history.hpp"
@@ -275,24 +276,7 @@ std::uint64_t EntityGenerationKey(int scope, int x, int y) {
 std::uint64_t EntityGeneration(int scope, int x, int y) {
     return g_entityGenerations[EntityGenerationKey(scope, x, y)];
 }
-enum class AcceptanceRole { None, Host, Client };
-AcceptanceRole g_acceptanceRole = AcceptanceRole::None;
-bool g_acceptanceB3 = false;
-bool g_acceptanceCD = false;
-bool g_acceptanceFinal = false;
-std::filesystem::path g_acceptanceDirectory;
-int g_acceptanceStep = 0;
-ULONGLONG g_acceptanceBrushStart = 0;
-std::size_t g_acceptanceSubmitted = 0, g_acceptancePendingHigh = 0;
-std::uint64_t g_acceptanceLastRevision = 0;
-int g_acceptancePresenceIndex = -1;
-enum class AcceptanceDialogAction { Manual, Save, Cancel };
-AcceptanceDialogAction g_acceptanceDialogAction = AcceptanceDialogAction::Manual;
-std::string g_acceptanceDialogComment;
-std::string g_acceptanceDialogToken;
-bool g_acceptanceModal = false;
-std::optional<std::filesystem::path> g_acceptanceSaveAsPath;
-save_workflow::FailureInjection g_acceptanceSaveFailure;
+acceptance_harness::AcceptanceState g_acceptance;
 std::filesystem::path g_lastSessionBackup;
 save_workflow::SaveResult g_lastSaveResult;
 std::uint64_t g_receivedSaveEvents = 0;
@@ -3607,11 +3591,11 @@ struct SaveCommentDialogData {
 };
 
 void WriteDialogAcceptanceArtifact(const std::string& name, const std::string& value) {
-    if (!g_acceptanceFinal || g_acceptanceDirectory.empty())
+    if (!g_acceptance.final || g_acceptance.directory.empty())
         return;
     std::error_code ignored;
-    std::filesystem::create_directories(g_acceptanceDirectory, ignored);
-    std::ofstream output(g_acceptanceDirectory / name, std::ios::binary | std::ios::trunc);
+    std::filesystem::create_directories(g_acceptance.directory, ignored);
+    std::ofstream output(g_acceptance.directory / name, std::ios::binary | std::ios::trunc);
     output << value;
 }
 
@@ -3631,25 +3615,25 @@ LRESULT CALLBACK SaveCommentDialogProc(HWND window, UINT message, WPARAM wParam,
         AddSaveDialogControl(window, L"BUTTON", L"Save", WS_TABSTOP | BS_DEFPUSHBUTTON, 206, 194, 76, 25, IDOK);
         AddSaveDialogControl(window, L"BUTTON", L"Cancel", WS_TABSTOP | BS_PUSHBUTTON, 290, 194, 76, 25, IDCANCEL);
         SetFocus(GetDlgItem(window, kSaveCommentEdit));
-        if (g_acceptanceFinal && g_acceptanceDialogAction != AcceptanceDialogAction::Manual) {
-            if (g_acceptanceDialogAction == AcceptanceDialogAction::Save) {
-                const std::wstring comment = Utf8ToWide(g_acceptanceDialogComment);
+        if (g_acceptance.final && g_acceptance.dialogAction != acceptance_harness::DialogAction::Manual) {
+            if (g_acceptance.dialogAction == acceptance_harness::DialogAction::Save) {
+                const std::wstring comment = Utf8ToWide(g_acceptance.dialogComment);
                 SetWindowTextW(GetDlgItem(window, kSaveCommentEdit), comment.c_str());
             }
-            WriteDialogAcceptanceArtifact(g_acceptanceDialogToken + "-comment-visible.flag", "visible");
+            WriteDialogAcceptanceArtifact(g_acceptance.dialogToken + "-comment-visible.flag", "visible");
             SetTimer(window, 1, 100, nullptr);
         }
         return 0;
     }
-    if (message == WM_TIMER && wParam == 1 && g_acceptanceFinal) {
-        const bool needsCapture = g_acceptanceDialogToken == "primary";
-        if (needsCapture && !std::filesystem::exists(g_acceptanceDirectory / "primary-comment-captured.flag"))
+    if (message == WM_TIMER && wParam == 1 && g_acceptance.final) {
+        const bool needsCapture = g_acceptance.dialogToken == "primary";
+        if (needsCapture && !std::filesystem::exists(g_acceptance.directory / "primary-comment-captured.flag"))
             return 0;
         KillTimer(window, 1);
-        if (g_acceptanceDialogAction == AcceptanceDialogAction::Cancel)
+        if (g_acceptance.dialogAction == acceptance_harness::DialogAction::Cancel)
             SendMessageW(window, WM_COMMAND, IDCANCEL, 0);
         else {
-            const std::wstring comment = Utf8ToWide(g_acceptanceDialogComment);
+            const std::wstring comment = Utf8ToWide(g_acceptance.dialogComment);
             SetWindowTextW(GetDlgItem(window, kSaveCommentEdit), comment.c_str());
             SendMessageW(window, WM_COMMAND, IDOK, 0);
         }
@@ -3711,7 +3695,7 @@ bool ShowSaveCommentDialog(HWND owner, std::string& comment) {
                                   GetModuleHandleW(nullptr), &data);
     if (!dialog)
         return false;
-    g_acceptanceModal = true;
+    g_acceptance.modal = true;
     EnableWindow(owner, FALSE);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
@@ -3724,7 +3708,7 @@ bool ShowSaveCommentDialog(HWND owner, std::string& comment) {
     }
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
-    g_acceptanceModal = false;
+    g_acceptance.modal = false;
     if (data.accepted)
         comment = std::move(data.comment);
     return data.accepted;
@@ -3759,15 +3743,15 @@ LRESULT CALLBACK SaveResultDialogProc(HWND window, UINT message, WPARAM wParam, 
             AddSaveDialogControl(window, L"STATIC", warning.c_str(), SS_LEFT, 22, 249, 361, 32, 0);
         }
         AddSaveDialogControl(window, L"BUTTON", L"OK", WS_TABSTOP | BS_DEFPUSHBUTTON, 174, 286, 76, 25, IDOK);
-        if (g_acceptanceFinal && g_acceptanceDialogAction != AcceptanceDialogAction::Manual) {
-            WriteDialogAcceptanceArtifact(g_acceptanceDialogToken + "-result-visible.flag", "visible");
+        if (g_acceptance.final && g_acceptance.dialogAction != acceptance_harness::DialogAction::Manual) {
+            WriteDialogAcceptanceArtifact(g_acceptance.dialogToken + "-result-visible.flag", "visible");
             SetTimer(window, 2, 100, nullptr);
         }
         return 0;
     }
-    if (message == WM_TIMER && wParam == 2 && g_acceptanceFinal) {
-        const bool needsCapture = g_acceptanceDialogToken == "primary";
-        if (needsCapture && !std::filesystem::exists(g_acceptanceDirectory / "primary-result-captured.flag"))
+    if (message == WM_TIMER && wParam == 2 && g_acceptance.final) {
+        const bool needsCapture = g_acceptance.dialogToken == "primary";
+        if (needsCapture && !std::filesystem::exists(g_acceptance.directory / "primary-result-captured.flag"))
             return 0;
         KillTimer(window, 2);
         SendMessageW(window, WM_COMMAND, IDOK, 0);
@@ -3828,7 +3812,7 @@ void ShowSaveResultDialog(HWND owner, SaveResultDialogData& data) {
                                   GetModuleHandleW(nullptr), &data);
     if (!dialog)
         return;
-    g_acceptanceModal = true;
+    g_acceptance.modal = true;
     EnableWindow(owner, FALSE);
     ShowWindow(dialog, SW_SHOW);
     UpdateWindow(dialog);
@@ -3841,7 +3825,7 @@ void ShowSaveResultDialog(HWND owner, SaveResultDialogData& data) {
     }
     EnableWindow(owner, TRUE);
     SetForegroundWindow(owner);
-    g_acceptanceModal = false;
+    g_acceptance.modal = false;
 }
 
 void OpenMap(HWND owner) {
@@ -3910,8 +3894,8 @@ void SaveMap(HWND owner, bool saveAs) {
     const std::string previousPath = g_map.path;
     std::string path = g_map.path;
     if (saveAs || path.empty()) {
-        if (g_acceptanceFinal && g_acceptanceSaveAsPath) {
-            path = g_acceptanceSaveAsPath->string();
+        if (g_acceptance.final && g_acceptance.saveAsPath) {
+            path = g_acceptance.saveAsPath->string();
         } else {
             char selectedPath[MAX_PATH] = {};
             OPENFILENAMEA dialog{};
@@ -3932,7 +3916,7 @@ void SaveMap(HWND owner, bool saveAs) {
     try {
         std::string comment;
         if (!ShowSaveCommentDialog(owner, comment)) {
-            g_acceptanceDialogAction = AcceptanceDialogAction::Manual;
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Manual;
             return;
         }
         const std::vector<std::uint8_t> emf = emf::WriteEmf(g_map);
@@ -3950,9 +3934,9 @@ void SaveMap(HWND owner, bool saveAs) {
         }
         metadata.timestamp = save_workflow::UtcTimestamp();
         const save_workflow::SaveResult result = save_workflow::SaveMapFile(
-            std::filesystem::path(path), emf, metadata, g_acceptanceSaveFailure,
+            std::filesystem::path(path), emf, metadata, g_acceptance.saveFailure,
             saveAs && !previousPath.empty() ? std::filesystem::path(previousPath) : std::filesystem::path{});
-        if (g_acceptanceFinal)
+        if (g_acceptance.final)
             g_lastSaveResult = result;
         if (!result.mapSaved)
             throw std::runtime_error(result.error.empty() ? "Unable to save the map file." : result.error);
@@ -3979,14 +3963,14 @@ void SaveMap(HWND owner, bool saveAs) {
         dialog.presentation = save_workflow::BuildResultPresentation(std::filesystem::path(path), metadata);
         dialog.warning = result.metadataSaved ? "" : "The EMF was saved, but mapper metadata could not be written.";
         ShowSaveResultDialog(owner, dialog);
-        g_acceptanceDialogAction = AcceptanceDialogAction::Manual;
-        g_acceptanceSaveFailure = {};
-        g_acceptanceSaveAsPath.reset();
+        g_acceptance.dialogAction = acceptance_harness::DialogAction::Manual;
+        g_acceptance.saveFailure = {};
+        g_acceptance.saveAsPath.reset();
     } catch (const std::exception& error) {
-        g_acceptanceDialogAction = AcceptanceDialogAction::Manual;
-        g_acceptanceSaveFailure = {};
-        g_acceptanceSaveAsPath.reset();
-        if (g_acceptanceFinal) {
+        g_acceptance.dialogAction = acceptance_harness::DialogAction::Manual;
+        g_acceptance.saveFailure = {};
+        g_acceptance.saveAsPath.reset();
+        if (g_acceptance.final) {
             ShowClassicNotice(error.what());
             WriteDialogAcceptanceArtifact("save-failure-notice.flag", error.what());
         } else
@@ -4663,7 +4647,7 @@ void ProcessCollaborationEvents(HWND owner) {
                     break;
                 }
             ShowClassicNotice("Map saved by " + author);
-            if (g_acceptanceFinal && g_acceptanceRole == AcceptanceRole::Client)
+            if (g_acceptance.final && g_acceptance.role == acceptance_harness::Role::Client)
                 WriteDialogAcceptanceArtifact("client-save-event.flag", "Map saved by " + author);
             if (g_collaborationWindow)
                 g_collaborationWindow->AppendSystem("Map saved by " + author + ".");
@@ -4680,35 +4664,16 @@ void ProcessCollaborationEvents(HWND owner) {
 }
 
 std::string AcceptanceFingerprint() {
-    const auto bytes = emf::WriteEmf(g_map);
-    std::ostringstream value;
-    value << std::hex << std::setw(8) << std::setfill('0') << emf::CalculateCrc32(bytes);
-    return value.str();
+    return acceptance_harness::GenerateFingerprint(g_map);
 }
 void WriteAcceptanceArtifact(const char* name, const std::string& value) {
-    std::filesystem::create_directories(g_acceptanceDirectory);
-    std::ofstream output(g_acceptanceDirectory / name, std::ios::binary | std::ios::trunc);
-    output << value;
+    acceptance_harness::WriteArtifact(g_acceptance, name, value);
 }
 void AppendAcceptanceLog(const std::string& value) {
-    std::filesystem::create_directories(g_acceptanceDirectory);
-    std::ofstream output(g_acceptanceDirectory / "B2-acceptance.log", std::ios::app);
-    output << value << '\n';
+    acceptance_harness::AppendLog(g_acceptance, value);
 }
 void ExportAcceptanceState(const char* name) {
-    std::ostringstream json;
-    json << "{\n  \"role\": \"" << (g_acceptanceRole == AcceptanceRole::Host ? "host" : "client")
-         << "\",\n  \"revision\": " << g_collaboration->Revision() << ",\n  \"fingerprint\": \""
-         << AcceptanceFingerprint() << "\",\n  \"width\": " << g_map.width << ", \"height\": " << g_map.height
-         << ", \"baseTile\": " << g_map.fillTile << ",\n  \"npcs\": " << g_map.npcs.size()
-         << ", \"items\": " << g_map.items.size() << ", \"signs\": " << g_map.signs.size()
-         << ",\n  \"pending\": " << g_pendingCollaborationEdits.size()
-         << ", \"pendingHighWater\": " << g_acceptancePendingHigh << ",\n  \"submitted\": " << g_acceptanceSubmitted
-         << ",\n  \"ui\": {\"graphicsCategory\": " << g_editorState.graphicsCategory << ", \"layer\": " << g_editorState.currentLayer
-         << ", \"tool\": " << static_cast<int>(g_editorState.drawTool) << ", \"brush\": " << g_editorState.brushSize
-         << ", \"flagsPage\": " << g_editorState.flagType << ", \"zoom\": " << g_camera.zoom << ", \"cameraX\": " << g_camera.offsetX
-         << ", \"cameraY\": " << g_camera.offsetY << "}\n}\n";
-    WriteAcceptanceArtifact(name, json.str());
+    acceptance_harness::ExportState(g_acceptance, *g_collaboration, g_map, name);
 }
 void AcceptanceGraphic(int x, int y, int layer, int graphic, int brush = 1) {
     SetSelectedLayer(layer);
@@ -4720,8 +4685,8 @@ void AcceptanceGraphic(int x, int y, int layer, int graphic, int brush = 1) {
     const auto before = g_collaboration->Revision();
     ApplySelectedTool();
     if (g_collaboration->Revision() != before || g_collaboration->State() == collaboration::SessionState::Connected)
-        ++g_acceptanceSubmitted;
-    g_acceptancePendingHigh = std::max(g_acceptancePendingHigh, g_pendingCollaborationEdits.size());
+        ++g_acceptance.submitted;
+    g_acceptance.pendingHigh = std::max(g_acceptance.pendingHigh, g_pendingCollaborationEdits.size());
 }
 void AcceptanceFlag(int x, int y, int page) {
     g_editorState.brushSize = 1;
@@ -4729,8 +4694,8 @@ void AcceptanceFlag(int x, int y, int page) {
     g_cursorX = x;
     g_cursorY = y;
     ApplyFlagToCursor();
-    ++g_acceptanceSubmitted;
-    g_acceptancePendingHigh = std::max(g_acceptancePendingHigh, g_pendingCollaborationEdits.size());
+    ++g_acceptance.submitted;
+    g_acceptance.pendingHigh = std::max(g_acceptance.pendingHigh, g_pendingCollaborationEdits.size());
 }
 void AcceptanceEntities(int x, int y, bool sign, bool npcs, bool items) {
     g_entityDraft = ReadEntitiesAt(x, y);
@@ -4751,12 +4716,12 @@ void AcceptanceEntities(int x, int y, bool sign, bool npcs, bool items) {
         g_entityDraft->dirtyScopes |= collaboration::EntityItems;
     }
     CommitEntityDraft();
-    ++g_acceptanceSubmitted;
-    g_acceptancePendingHigh = std::max(g_acceptancePendingHigh, g_pendingCollaborationEdits.size());
+    ++g_acceptance.submitted;
+    g_acceptance.pendingHigh = std::max(g_acceptance.pendingHigh, g_pendingCollaborationEdits.size());
 }
 void RunB3AcceptanceStep() {
-    if (g_acceptanceRole == AcceptanceRole::Host) {
-        if (g_acceptanceStep == 0) {
+    if (g_acceptance.role == acceptance_harness::Role::Host) {
+        if (g_acceptance.step == 0) {
             collaboration::HostOptions options{"B3 acceptance",
                                                "HarnessHost",
                                                "",
@@ -4767,11 +4732,11 @@ void RunB3AcceptanceStep() {
             std::string error;
             if (g_collaboration->StartHosting(options, error)) {
                 AppendAcceptanceLog("B3 host ready");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->ConnectedGuestCount() == 1) {
+        if (g_acceptance.step == 1 && g_collaboration->ConnectedGuestCount() == 1) {
             SetBaseTileGraphic(1);
             ResizeMap(g_map.width + 2, g_map.height + 2);
             AcceptanceGraphic(5, 5, 1, 2);
@@ -4782,10 +4747,10 @@ void RunB3AcceptanceStep() {
             g_entityDraft->dirtyScopes = collaboration::EntityNpcs;
             WriteAcceptanceArtifact("b3-staged.flag", "ready");
             AppendAcceptanceLog("B3 host map operations entities and dirty staged NPC prepared");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && std::filesystem::exists(g_acceptanceDirectory / "b3-client-conflict.flag") &&
+        if (g_acceptance.step == 2 && std::filesystem::exists(g_acceptance.directory / "b3-client-conflict.flag") &&
             EntityGeneration(2, 12, 12) > 0) {
             const auto revision = g_collaboration->Revision();
             CommitEntityDraft();
@@ -4793,45 +4758,45 @@ void RunB3AcceptanceStep() {
                 WriteAcceptanceArtifact("b3-conflict-pass.flag", "rejected");
                 AppendAcceptanceLog("B3 stale NPC save rejected without revision advance");
             }
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3 && std::filesystem::exists(g_acceptanceDirectory / "b3-client-finished.flag")) {
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+        if (g_acceptance.step == 3 && std::filesystem::exists(g_acceptance.directory / "b3-client-finished.flag")) {
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("host-state.json");
             WriteAcceptanceArtifact("host-complete.flag", "done");
             AppendAcceptanceLog("B3 host final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint());
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
         }
     } else {
-        if (g_acceptanceStep == 0) {
+        if (g_acceptance.step == 0) {
             SetGraphicsCategory(0);
             g_editorState.selectedGraphic() = 4;
             g_editorState.drawTool = EditTool::Pencil;
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "HarnessClient", "", 39121}, error)) {
                 AppendAcceptanceLog("B3 client connecting");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
-            std::filesystem::exists(g_acceptanceDirectory / "b3-staged.flag") && g_collaboration->Revision() >= 5) {
+        if (g_acceptance.step == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
+            std::filesystem::exists(g_acceptance.directory / "b3-staged.flag") && g_collaboration->Revision() >= 5) {
             ExportAcceptanceState("client-ui-initial.json");
             AcceptanceEntities(12, 12, false, true, false);
             WriteAcceptanceArtifact("b3-client-conflict.flag", "saved");
             AppendAcceptanceLog("B3 client committed conflicting NPC scope");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && std::filesystem::exists(g_acceptanceDirectory / "b3-conflict-pass.flag")) {
+        if (g_acceptance.step == 2 && std::filesystem::exists(g_acceptance.directory / "b3-conflict-pass.flag")) {
             ExportAcceptanceState("client-ui-after-remote.json");
             ClearGraphicLayer(1);
             ClearFlagCategory(0);
@@ -4858,37 +4823,37 @@ void RunB3AcceptanceStep() {
             g_entityDraft = std::move(pasted);
             CommitEntityDraft();
             ClearAllMapData();
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3 && g_pendingCollaborationEdits.empty()) {
+        if (g_acceptance.step == 3 && g_pendingCollaborationEdits.empty()) {
             AcceptanceGraphic(3, 3, 1, 3);
             AcceptanceEntities(4, 4, true, true, true);
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
             return;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000) {
             WriteAcceptanceArtifact("b3-client-finished.flag", "done");
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 5;
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 5;
         }
-        if (g_acceptanceStep == 5 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 5 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("client-state.json");
             AppendAcceptanceLog("B3 client final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint());
-            g_acceptanceStep = 6;
+            g_acceptance.step = 6;
         }
     }
 }
 void RunCDAcceptanceStep() {
-    if (g_acceptanceRole == AcceptanceRole::Host) {
-        if (g_acceptanceStep == 0) {
+    if (g_acceptance.role == acceptance_harness::Role::Host) {
+        if (g_acceptance.step == 0) {
             collaboration::HostOptions options{"C/D acceptance",
                                                "PresenceHost",
                                                "",
@@ -4899,25 +4864,25 @@ void RunCDAcceptanceStep() {
             std::string error;
             if (g_collaboration->StartHosting(options, error)) {
                 AppendAcceptanceLog("C/D host ready");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->ConnectedGuestCount() == 1) {
+        if (g_acceptance.step == 1 && g_collaboration->ConnectedGuestCount() == 1) {
             const auto people = g_collaboration->Participants();
             if (people.size() < 2)
                 return;
             std::string error;
             g_collaboration->SetPassword("acceptance-one", error);
             g_collaboration->ChangeParticipantRole(people[1].userId, collaboration::ParticipantRole::Viewer, error);
-            g_acceptanceLastRevision = g_collaboration->Revision();
+            g_acceptance.lastRevision = g_collaboration->Revision();
             WriteAcceptanceArtifact("cd-viewer-role.flag", "ready");
             AppendAcceptanceLog("C/D client role Viewer password enabled");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && std::filesystem::exists(g_acceptanceDirectory / "cd-viewer-rejected.flag")) {
-            if (g_collaboration->Revision() != g_acceptanceLastRevision) {
+        if (g_acceptance.step == 2 && std::filesystem::exists(g_acceptance.directory / "cd-viewer-rejected.flag")) {
+            if (g_collaboration->Revision() != g_acceptance.lastRevision) {
                 AppendAcceptanceLog("C/D ERROR viewer mutation advanced revision");
                 return;
             }
@@ -4930,17 +4895,17 @@ void RunCDAcceptanceStep() {
             g_collaboration->SetPassword("", error);
             WriteAcceptanceArtifact("cd-editor-role.flag", "ready");
             AppendAcceptanceLog("C/D Viewer mutation rejected; Editor restored; password changed and removed");
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3 && std::filesystem::exists(g_acceptanceDirectory / "cd-presence-complete.flag")) {
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+        if (g_acceptance.step == 3 && std::filesystem::exists(g_acceptance.directory / "cd-presence-complete.flag")) {
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("host-state.json");
             std::ostringstream metrics;
             metrics << "sent=" << g_collaboration->PresencePacketsSent()
@@ -4949,19 +4914,19 @@ void RunCDAcceptanceStep() {
             WriteAcceptanceArtifact("host-complete.flag", "done");
             AppendAcceptanceLog("C/D host final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint() + " " + metrics.str());
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
         }
     } else {
-        if (g_acceptanceStep == 0) {
+        if (g_acceptance.step == 0) {
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "PresenceClient", "", 39122}, error)) {
                 AppendAcceptanceLog("C/D client connecting");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
-            std::filesystem::exists(g_acceptanceDirectory / "cd-viewer-role.flag") &&
+        if (g_acceptance.step == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
+            std::filesystem::exists(g_acceptance.directory / "cd-viewer-role.flag") &&
             g_collaboration->LocalRole() == collaboration::ParticipantRole::Viewer) {
             collaboration::Presence remoteLocation;
             remoteLocation.area = collaboration::PresenceArea::Viewer;
@@ -4979,26 +4944,26 @@ void RunCDAcceptanceStep() {
                 WriteAcceptanceArtifact("cd-viewer-rejected.flag", "pass");
                 AppendAcceptanceLog("C/D Viewer edit rejected, presence remains active");
             }
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && std::filesystem::exists(g_acceptanceDirectory / "cd-editor-role.flag") &&
+        if (g_acceptance.step == 2 && std::filesystem::exists(g_acceptance.directory / "cd-editor-role.flag") &&
             g_collaboration->LocalRole() == collaboration::ParticipantRole::Editor) {
             AcceptanceGraphic(3, 3, 1, 3);
             AcceptanceFlag(4, 4, 1);
             AcceptanceEntities(5, 5, false, true, false);
-            g_acceptanceBrushStart = GetTickCount64();
+            g_acceptance.brushStart = GetTickCount64();
             WriteAcceptanceArtifact("cd-presence-start.flag", "running");
             AppendAcceptanceLog("C/D 30 second presence movement started");
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3) {
-            const auto elapsed = GetTickCount64() - g_acceptanceBrushStart;
+        if (g_acceptance.step == 3) {
+            const auto elapsed = GetTickCount64() - g_acceptance.brushStart;
             if (elapsed < 30000) {
                 const int index = static_cast<int>(elapsed / 100);
-                if (index != g_acceptancePresenceIndex) {
-                    g_acceptancePresenceIndex = index;
+                if (index != g_acceptance.presenceIndex) {
+                    g_acceptance.presenceIndex = index;
                     collaboration::Presence value;
                     value.area = collaboration::PresenceArea::Viewer;
                     value.viewerActive = true;
@@ -5012,13 +4977,13 @@ void RunCDAcceptanceStep() {
             WriteAcceptanceArtifact("cd-presence-complete.flag", "done");
             AppendAcceptanceLog("C/D presence movement duration_ms=" + std::to_string(elapsed) +
                                 " sent=" + std::to_string(g_collaboration->PresencePacketsSent()));
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("client-state.json");
             std::ostringstream metrics;
             metrics << "sent=" << g_collaboration->PresencePacketsSent()
@@ -5026,7 +4991,7 @@ void RunCDAcceptanceStep() {
             WriteAcceptanceArtifact("client-presence.txt", metrics.str());
             AppendAcceptanceLog("C/D client final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint() + " " + metrics.str());
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
         }
     }
 }
@@ -5052,8 +5017,9 @@ std::size_t AcceptanceBackupCount(const std::filesystem::path& mapPath) {
     return count;
 }
 void ExportFinalAcceptanceState(const char* name) {
+    // Custom export for final acceptance with additional fields
     std::ostringstream json;
-    json << "{\n  \"role\": \"" << (g_acceptanceRole == AcceptanceRole::Host ? "host" : "client")
+    json << "{\n  \"role\": \"" << (g_acceptance.role == acceptance_harness::Role::Host ? "host" : "client")
          << "\",\n  \"revision\": " << g_collaboration->Revision() << ",\n  \"fingerprint\": \""
          << AcceptanceFingerprint() << "\",\n  \"pending\": " << g_pendingCollaborationEdits.size()
          << ",\n  \"dirty\": " << (g_map.dirty ? "true" : "false") << ",\n  \"saveEvents\": " << g_receivedSaveEvents
@@ -5062,16 +5028,16 @@ void ExportFinalAcceptanceState(const char* name) {
 }
 
 void RunFinalAcceptanceStep() {
-    if (g_acceptanceModal)
+    if (g_acceptance.modal)
         return;
     static std::string initialFingerprint, preSaveFingerprint, cancelMap, cancelMetadata;
     static std::uint64_t preSaveRevision = 0, cancelSaveEvents = 0;
     static std::size_t cancelBackups = 0;
     static std::filesystem::path activeMap;
     if (activeMap.empty())
-        activeMap = g_acceptanceDirectory / L"maps" / L"collaborative.emf";
-    if (g_acceptanceRole == AcceptanceRole::Host) {
-        if (g_acceptanceStep == 0) {
+        activeMap = g_acceptance.directory / L"maps" / L"collaborative.emf";
+    if (g_acceptance.role == acceptance_harness::Role::Host) {
+        if (g_acceptance.step == 0) {
             initialFingerprint = AcceptanceFingerprint();
             const auto emf = emf::WriteEmf(g_map);
             collaboration::HostOptions options{
@@ -5089,31 +5055,31 @@ void RunFinalAcceptanceStep() {
                                                                    (semantic ? "true" : "false") +
                                                                    ",\"fingerprint\":\"" + initialFingerprint + "\"}");
                 AppendAcceptanceLog("FINAL session backup semantic=" + std::string(semantic ? "PASS" : "FAIL"));
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->ConnectedGuestCount() == 1) {
+        if (g_acceptance.step == 1 && g_collaboration->ConnectedGuestCount() == 1) {
             AcceptanceGraphic(5, 5, 1, 2);
             AcceptanceEntities(6, 6, false, true, false);
             WriteAcceptanceArtifact("final-host-edits.flag", "object+npc");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && g_collaboration->Revision() >= 4 && g_pendingCollaborationEdits.empty()) {
+        if (g_acceptance.step == 2 && g_collaboration->Revision() >= 4 && g_pendingCollaborationEdits.empty()) {
             preSaveRevision = g_collaboration->Revision();
             preSaveFingerprint = AcceptanceFingerprint();
             WriteAcceptanceArtifact("final-edits-converged.flag", "ready");
             AppendAcceptanceLog("FINAL representative edits revision=" + std::to_string(preSaveRevision) +
                                 " fingerprint=" + preSaveFingerprint);
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3 && std::filesystem::exists(g_acceptanceDirectory / L"client-save-restricted.json")) {
-            g_acceptanceDialogAction = AcceptanceDialogAction::Save;
-            g_acceptanceDialogComment = "Collaborative forest pass complete.";
-            g_acceptanceDialogToken = "primary";
-            g_acceptanceStep = 4;
+        if (g_acceptance.step == 3 && std::filesystem::exists(g_acceptance.directory / L"client-save-restricted.json")) {
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Save;
+            g_acceptance.dialogComment = "Collaborative forest pass complete.";
+            g_acceptance.dialogToken = "primary";
+            g_acceptance.step = 4;
             SaveMap(g_mainWindow, false);
             bool backupSemantic = false, mapSemantic = false, metadataValid = false, privateFree = false;
             save_workflow::Metadata metadata;
@@ -5129,7 +5095,7 @@ void RunFinalAcceptanceStep() {
                                 metadata.author == "ForestHost" && !metadata.timestamp.empty();
                 const std::string raw = AcceptanceFileText(g_lastSaveResult.metadataPath);
                 privateFree = raw.find("password") == std::string::npos && raw.find("127.0.0.1") == std::string::npos &&
-                              raw.find(g_acceptanceDirectory.string()) == std::string::npos &&
+                              raw.find(g_acceptance.directory.string()) == std::string::npos &&
                               raw.find("participants") == std::string::npos;
             } catch (...) {
             }
@@ -5143,15 +5109,15 @@ void RunFinalAcceptanceStep() {
             WriteAcceptanceArtifact("primary-save.json", json.str());
             AppendAcceptanceLog("FINAL primary save backup=" + std::string(backupSemantic ? "PASS" : "FAIL") + " emf=" +
                                 (mapSemantic ? "PASS" : "FAIL") + " metadata=" + (metadataValid ? "PASS" : "FAIL"));
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
             return;
         }
-        if (g_acceptanceStep == 5 &&
-            std::filesystem::exists(g_acceptanceDirectory / L"client-save-event-verified.json")) {
+        if (g_acceptance.step == 5 &&
+            std::filesystem::exists(g_acceptance.directory / L"client-save-event-verified.json")) {
             const auto revision = g_collaboration->Revision();
-            g_acceptanceDialogAction = AcceptanceDialogAction::Save;
-            g_acceptanceDialogComment = "";
-            g_acceptanceDialogToken = "blank";
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Save;
+            g_acceptance.dialogComment = "";
+            g_acceptance.dialogToken = "blank";
             SaveMap(g_mainWindow, false);
             save_workflow::Metadata metadata;
             std::string error;
@@ -5167,14 +5133,14 @@ void RunFinalAcceptanceStep() {
             cancelBackups = AcceptanceBackupCount(activeMap);
             cancelSaveEvents = g_receivedSaveEvents;
             WriteAcceptanceArtifact("cancel-ready.flag", "dirty");
-            g_acceptanceStep = 6;
+            g_acceptance.step = 6;
             return;
         }
-        if (g_acceptanceStep == 6 && std::filesystem::exists(g_acceptanceDirectory / L"cancel-edit-seen.flag")) {
+        if (g_acceptance.step == 6 && std::filesystem::exists(g_acceptance.directory / L"cancel-edit-seen.flag")) {
             const auto revision = g_collaboration->Revision();
-            g_acceptanceDialogAction = AcceptanceDialogAction::Cancel;
-            g_acceptanceDialogComment = "discarded";
-            g_acceptanceDialogToken = "cancel";
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Cancel;
+            g_acceptance.dialogComment = "discarded";
+            g_acceptance.dialogToken = "cancel";
             SaveMap(g_mainWindow, false);
             const auto metaPath = save_workflow::MetadataPath(activeMap);
             const std::string mapAfter = AcceptanceFileText(activeMap);
@@ -5183,33 +5149,33 @@ void RunFinalAcceptanceStep() {
                               AcceptanceBackupCount(activeMap) == cancelBackups &&
                               g_receivedSaveEvents == cancelSaveEvents && g_collaboration->Revision() == revision;
             WriteAcceptanceArtifact("cancel-save.json", std::string("{\"pass\":") + (pass ? "true" : "false") + "}");
-            g_acceptanceStep = 7;
+            g_acceptance.step = 7;
             return;
         }
-        if (g_acceptanceStep == 7) {
+        if (g_acceptance.step == 7) {
             const auto revision = g_collaboration->Revision();
             const std::string before = AcceptanceFileText(activeMap);
-            g_acceptanceDialogAction = AcceptanceDialogAction::Save;
-            g_acceptanceDialogComment = "must fail";
-            g_acceptanceDialogToken = "failure";
-            g_acceptanceSaveFailure = {save_workflow::FailurePoint::BackupWrite};
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Save;
+            g_acceptance.dialogComment = "must fail";
+            g_acceptance.dialogToken = "failure";
+            g_acceptance.saveFailure = {save_workflow::FailurePoint::BackupWrite};
             SaveMap(g_mainWindow, false);
             const std::string after = AcceptanceFileText(activeMap);
             const bool pass =
                 g_map.dirty && before == after && g_collaboration->Revision() == revision && !g_lastSaveResult.mapSaved;
             WriteAcceptanceArtifact("failed-save.json", std::string("{\"pass\":") + (pass ? "true" : "false") + "}");
-            g_acceptanceStep = 8;
+            g_acceptance.step = 8;
             return;
         }
-        if (g_acceptanceStep == 8) {
+        if (g_acceptance.step == 8) {
             const auto revision = g_collaboration->Revision();
             const std::string priorDiskFingerprint = SemanticFingerprint(activeMap);
-            g_acceptanceSaveAsPath = g_acceptanceDirectory / L"maps" / L"collaborative-save-as.emf";
-            g_acceptanceDialogAction = AcceptanceDialogAction::Save;
-            g_acceptanceDialogComment = "Save As collaborative checkpoint.";
-            g_acceptanceDialogToken = "save-as";
+            g_acceptance.saveAsPath = g_acceptance.directory / L"maps" / L"collaborative-save-as.emf";
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Save;
+            g_acceptance.dialogComment = "Save As collaborative checkpoint.";
+            g_acceptance.dialogToken = "save-as";
             SaveMap(g_mainWindow, true);
-            activeMap = g_acceptanceDirectory / L"maps" / L"collaborative-save-as.emf";
+            activeMap = g_acceptance.directory / L"maps" / L"collaborative-save-as.emf";
             save_workflow::Metadata metadata;
             std::string error;
             const bool backup = !g_lastSaveResult.backupPath.empty() &&
@@ -5221,21 +5187,21 @@ void RunFinalAcceptanceStep() {
                               metadata.map == "collaborative-save-as.emf" && g_collaboration->Revision() == revision;
             WriteAcceptanceArtifact("save-as.json", std::string("{\"pass\":") + (pass ? "true" : "false") +
                                                         ",\"backupSemantic\":" + (backup ? "true" : "false") + "}");
-            g_acceptanceStep = 9;
+            g_acceptance.step = 9;
             return;
         }
-        if (g_acceptanceStep == 9 && g_receivedSaveEvents >= 3) {
+        if (g_acceptance.step == 9 && g_receivedSaveEvents >= 3) {
             const auto people = g_collaboration->Participants();
             if (people.size() < 2)
                 return;
             std::string error;
             g_collaboration->ChangeParticipantRole(people[1].userId, collaboration::ParticipantRole::Viewer, error);
-            g_acceptanceLastRevision = g_collaboration->Revision();
+            g_acceptance.lastRevision = g_collaboration->Revision();
             WriteAcceptanceArtifact("final-viewer-role.flag", "ready");
-            g_acceptanceStep = 10;
+            g_acceptance.step = 10;
             return;
         }
-        if (g_acceptanceStep == 10 && std::filesystem::exists(g_acceptanceDirectory / L"final-viewer-rejected.flag")) {
+        if (g_acceptance.step == 10 && std::filesystem::exists(g_acceptance.directory / L"final-viewer-rejected.flag")) {
             const auto people = g_collaboration->Participants();
             if (people.size() < 2)
                 return;
@@ -5244,7 +5210,7 @@ void RunFinalAcceptanceStep() {
                 presence->second.x != g_map.width - 1 || presence->second.y != g_map.height - 1)
                 return;
             std::string error;
-            const bool stable = g_collaboration->Revision() == g_acceptanceLastRevision;
+            const bool stable = g_collaboration->Revision() == g_acceptance.lastRevision;
             const bool editor =
                 g_collaboration->ChangeParticipantRole(people[1].userId, collaboration::ParticipantRole::Editor, error);
             const bool added = g_collaboration->SetPassword("one", error);
@@ -5260,28 +5226,28 @@ void RunFinalAcceptanceStep() {
                     ",\"offscreenPresence\":true,\"editorRestored\":" + (editor ? "true" : "false") +
                     ",\"passwordLifecycle\":" + ((added && changed && removed) ? "true" : "false") + "}");
             WriteAcceptanceArtifact("final-editor-role.flag", admin ? "ready" : "admin-error");
-            g_acceptanceStep = 11;
+            g_acceptance.step = 11;
             return;
         }
-        if (g_acceptanceStep == 11 && std::filesystem::exists(g_acceptanceDirectory / L"final-soak-done.flag")) {
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 12;
+        if (g_acceptance.step == 11 && std::filesystem::exists(g_acceptance.directory / L"final-soak-done.flag")) {
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 12;
             return;
         }
-        if (g_acceptanceStep == 12 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1200 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 12 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1200 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportFinalAcceptanceState("final-host-before-save.json");
             WriteAcceptanceArtifact("final-host-ready.flag", "ready");
-            g_acceptanceStep = 13;
+            g_acceptance.step = 13;
             return;
         }
-        if (g_acceptanceStep == 13 &&
-            std::filesystem::exists(g_acceptanceDirectory / L"final-client-before-save.json")) {
-            g_acceptanceDialogAction = AcceptanceDialogAction::Save;
-            g_acceptanceDialogComment = "Final Map Together V1 checkpoint.";
-            g_acceptanceDialogToken = "final";
+        if (g_acceptance.step == 13 &&
+            std::filesystem::exists(g_acceptance.directory / L"final-client-before-save.json")) {
+            g_acceptance.dialogAction = acceptance_harness::DialogAction::Save;
+            g_acceptance.dialogComment = "Final Map Together V1 checkpoint.";
+            g_acceptance.dialogToken = "final";
             const auto revision = g_collaboration->Revision();
             SaveMap(g_mainWindow, false);
             const bool disk =
@@ -5292,18 +5258,18 @@ void RunFinalAcceptanceStep() {
             WriteAcceptanceArtifact("final-complete.flag", "done");
             AppendAcceptanceLog("FINAL complete revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint());
-            g_acceptanceStep = 14;
+            g_acceptance.step = 14;
             return;
         }
     } else {
-        if (g_acceptanceStep == 0) {
+        if (g_acceptance.step == 0) {
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "ForestEditor", "", 39123}, error))
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
-            std::filesystem::exists(g_acceptanceDirectory / L"final-host-edits.flag") &&
+        if (g_acceptance.step == 1 && g_collaboration->State() == collaboration::SessionState::Connected &&
+            std::filesystem::exists(g_acceptance.directory / L"final-host-edits.flag") &&
             g_collaboration->Revision() >= 2) {
             AcceptanceFlag(7, 7, 1);
             AcceptanceGraphic(8, 8, 1, 4);
@@ -5314,45 +5280,45 @@ void RunFinalAcceptanceStep() {
             presence.y = static_cast<std::uint16_t>(g_map.height - 1);
             std::string error;
             g_collaboration->SendPresence(presence, error);
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && std::filesystem::exists(g_acceptanceDirectory / L"final-edits-converged.flag") &&
+        if (g_acceptance.step == 2 && std::filesystem::exists(g_acceptance.directory / L"final-edits-converged.flag") &&
             g_pendingCollaborationEdits.empty()) {
             const auto revision = g_collaboration->Revision();
             const auto fingerprint = AcceptanceFingerprint();
             const auto before = ReadFile(activeMap.string());
-            const bool modalBefore = g_acceptanceModal;
+            const bool modalBefore = g_acceptance.modal;
             SaveMap(g_mainWindow, false);
             const auto after = ReadFile(activeMap.string());
-            const bool pass = !modalBefore && !g_acceptanceModal && before == after &&
+            const bool pass = !modalBefore && !g_acceptance.modal && before == after &&
                               g_collaboration->Revision() == revision && AcceptanceFingerprint() == fingerprint &&
                               g_collaboration->State() == collaboration::SessionState::Connected &&
                               g_activeNotice == save_workflow::SaveDeniedMessage();
             WriteAcceptanceArtifact("client-save-restricted.json",
                                     std::string("{\"pass\":") + (pass ? "true" : "false") +
                                         ",\"revision\":" + std::to_string(revision) + "}");
-            g_acceptanceLastRevision = revision;
+            g_acceptance.lastRevision = revision;
             initialFingerprint = fingerprint;
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
             return;
         }
-        if (g_acceptanceStep == 3 && g_receivedSaveEvents >= 1) {
-            const bool pass = g_collaboration->Revision() == g_acceptanceLastRevision &&
+        if (g_acceptance.step == 3 && g_receivedSaveEvents >= 1) {
+            const bool pass = g_collaboration->Revision() == g_acceptance.lastRevision &&
                               AcceptanceFingerprint() == initialFingerprint;
             WriteAcceptanceArtifact("client-save-event-verified.json", std::string("{\"pass\":") +
                                                                            (pass ? "true" : "false") +
                                                                            ",\"notice\":\"Map saved by ForestHost\"}");
-            g_acceptanceStep = 4;
+            g_acceptance.step = 4;
             return;
         }
-        if (g_acceptanceStep == 4 && std::filesystem::exists(g_acceptanceDirectory / L"cancel-ready.flag") &&
-            g_collaboration->Revision() > g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && std::filesystem::exists(g_acceptance.directory / L"cancel-ready.flag") &&
+            g_collaboration->Revision() > g_acceptance.lastRevision) {
             WriteAcceptanceArtifact("cancel-edit-seen.flag", "seen");
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
             return;
         }
-        if (g_acceptanceStep == 5 && std::filesystem::exists(g_acceptanceDirectory / L"final-viewer-role.flag") &&
+        if (g_acceptance.step == 5 && std::filesystem::exists(g_acceptance.directory / L"final-viewer-role.flag") &&
             g_collaboration->LocalRole() == collaboration::ParticipantRole::Viewer) {
             const auto revision = g_collaboration->Revision();
             AcceptanceGraphic(3, 3, 1, 2);
@@ -5365,44 +5331,44 @@ void RunFinalAcceptanceStep() {
             g_collaboration->SendPresence(presence, error);
             if (g_collaboration->Revision() == revision && g_pendingCollaborationEdits.empty())
                 WriteAcceptanceArtifact("final-viewer-rejected.flag", "pass");
-            g_acceptanceStep = 6;
+            g_acceptance.step = 6;
             return;
         }
-        if (g_acceptanceStep == 6 && std::filesystem::exists(g_acceptanceDirectory / L"final-editor-role.flag") &&
+        if (g_acceptance.step == 6 && std::filesystem::exists(g_acceptance.directory / L"final-editor-role.flag") &&
             g_collaboration->LocalRole() == collaboration::ParticipantRole::Editor) {
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptancePresenceIndex = -1;
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.presenceIndex = -1;
             WriteAcceptanceArtifact("final-soak-start.flag", "running");
-            g_acceptanceStep = 7;
+            g_acceptance.step = 7;
             return;
         }
-        if (g_acceptanceStep == 7) {
-            const auto elapsed = GetTickCount64() - g_acceptanceBrushStart;
+        if (g_acceptance.step == 7) {
+            const auto elapsed = GetTickCount64() - g_acceptance.brushStart;
             if (elapsed < 30000) {
                 const int index = static_cast<int>(elapsed / 90);
-                if (index != g_acceptancePresenceIndex) {
-                    g_acceptancePresenceIndex = index;
+                if (index != g_acceptance.presenceIndex) {
+                    g_acceptance.presenceIndex = index;
                     AcceptanceGraphic(2 + index % std::max(1, g_map.width - 4),
                                       2 + (index / 7) % std::max(1, g_map.height - 4), 1, 1 + (index % 4));
                 }
                 return;
             }
             WriteAcceptanceArtifact("final-soak-done.flag", std::to_string(elapsed));
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 8;
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 8;
             return;
         }
-        if (g_acceptanceStep == 8 && std::filesystem::exists(g_acceptanceDirectory / L"final-host-ready.flag") &&
-            g_pendingCollaborationEdits.empty() && GetTickCount64() - g_acceptanceBrushStart > 1200) {
+        if (g_acceptance.step == 8 && std::filesystem::exists(g_acceptance.directory / L"final-host-ready.flag") &&
+            g_pendingCollaborationEdits.empty() && GetTickCount64() - g_acceptance.brushStart > 1200) {
             ExportFinalAcceptanceState("final-client-before-save.json");
-            g_acceptanceStep = 9;
+            g_acceptance.step = 9;
             return;
         }
-        if (g_acceptanceStep == 9 && std::filesystem::exists(g_acceptanceDirectory / L"final-complete.flag") &&
+        if (g_acceptance.step == 9 && std::filesystem::exists(g_acceptance.directory / L"final-complete.flag") &&
             g_receivedSaveEvents >= 4) {
             ExportFinalAcceptanceState("final-client-state.json");
-            g_acceptanceStep = 10;
+            g_acceptance.step = 10;
             return;
         }
     }
@@ -5410,20 +5376,20 @@ void RunFinalAcceptanceStep() {
 void RunAcceptanceStep() {
     if (!g_collaboration || !g_map.loaded)
         return;
-    if (g_acceptanceFinal) {
+    if (g_acceptance.final) {
         RunFinalAcceptanceStep();
         return;
     }
-    if (g_acceptanceCD) {
+    if (g_acceptance.cd) {
         RunCDAcceptanceStep();
         return;
     }
-    if (g_acceptanceB3) {
+    if (g_acceptance.b3) {
         RunB3AcceptanceStep();
         return;
     }
-    if (g_acceptanceRole == AcceptanceRole::Host) {
-        if (g_acceptanceStep == 0) {
+    if (g_acceptance.role == acceptance_harness::Role::Host) {
+        if (g_acceptance.step == 0) {
             collaboration::HostOptions options{"B2 acceptance",
                                                "HarnessHost",
                                                "",
@@ -5434,27 +5400,27 @@ void RunAcceptanceStep() {
             std::string error;
             if (g_collaboration->StartHosting(options, error)) {
                 AppendAcceptanceLog("host ready");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->ConnectedGuestCount() == 1) {
+        if (g_acceptance.step == 1 && g_collaboration->ConnectedGuestCount() == 1) {
             AcceptanceGraphic(5, 5, 1, 1);
             AcceptanceGraphic(12, 12, 1, 2, 3);
             AcceptanceFlag(6, 6, 1);
             g_warpSettings = {77, 9, 10, 3, 14};
             AcceptanceFlag(8, 8, 5);
             AppendAcceptanceLog("host graphics cluster block warp submitted");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
             return;
         }
-        if (g_acceptanceStep == 2 && g_collaboration->Revision() >= 7) {
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 3;
+        if (g_acceptance.step == 2 && g_collaboration->Revision() >= 7) {
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 3;
             AppendAcceptanceLog("30 second brush started");
         }
-        if (g_acceptanceStep == 3) {
-            const auto elapsed = GetTickCount64() - g_acceptanceBrushStart;
+        if (g_acceptance.step == 3) {
+            const auto elapsed = GetTickCount64() - g_acceptance.brushStart;
             if (elapsed < 30000) {
                 const int span = std::max(1, std::min(g_map.width - 4, 40));
                 const int index = static_cast<int>(elapsed / 45);
@@ -5464,21 +5430,21 @@ void RunAcceptanceStep() {
             }
             AppendAcceptanceLog("30 second brush completed duration_ms=" + std::to_string(elapsed));
             WriteAcceptanceArtifact("brush-complete.flag", "done");
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("host-state.json");
             WriteAcceptanceArtifact("host-complete.flag", "done");
             AppendAcceptanceLog("host final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint());
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
         }
-    } else if (g_acceptanceRole == AcceptanceRole::Client) {
-        if (g_acceptanceStep == 0) {
+    } else if (g_acceptance.role == acceptance_harness::Role::Client) {
+        if (g_acceptance.step == 0) {
             SetGraphicsCategory(0);
             g_editorState.selectedGraphic() = 2;
             g_editorState.drawTool = EditTool::Pencil;
@@ -5486,35 +5452,35 @@ void RunAcceptanceStep() {
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "HarnessClient", "", 39120}, error)) {
                 AppendAcceptanceLog("client connecting");
-                g_acceptanceStep = 1;
+                g_acceptance.step = 1;
             }
             return;
         }
-        if (g_acceptanceStep == 1 && g_collaboration->State() == collaboration::SessionState::Connected) {
+        if (g_acceptance.step == 1 && g_collaboration->State() == collaboration::SessionState::Connected) {
             ExportAcceptanceState("client-ui-initial.json");
-            g_acceptanceStep = 2;
+            g_acceptance.step = 2;
         }
-        if (g_acceptanceStep == 2 && g_collaboration->Revision() >= 4) {
+        if (g_acceptance.step == 2 && g_collaboration->Revision() >= 4) {
             ExportAcceptanceState("client-ui-after-remote.json");
             g_chairDirection = 3;
             AcceptanceFlag(7, 7, 4);
             AcceptanceFlag(8, 8, 0);
             AcceptanceGraphic(10, 10, 1, 4);
             AppendAcceptanceLog("client chair open graphic submitted");
-            g_acceptanceStep = 3;
+            g_acceptance.step = 3;
         }
-        if (g_acceptanceStep == 3 && std::filesystem::exists(g_acceptanceDirectory / "brush-complete.flag")) {
-            g_acceptanceLastRevision = g_collaboration->Revision();
-            g_acceptanceBrushStart = GetTickCount64();
-            g_acceptanceStep = 4;
+        if (g_acceptance.step == 3 && std::filesystem::exists(g_acceptance.directory / "brush-complete.flag")) {
+            g_acceptance.lastRevision = g_collaboration->Revision();
+            g_acceptance.brushStart = GetTickCount64();
+            g_acceptance.step = 4;
         }
-        if (g_acceptanceStep == 4 && g_pendingCollaborationEdits.empty() &&
-            GetTickCount64() - g_acceptanceBrushStart > 1000 &&
-            g_collaboration->Revision() == g_acceptanceLastRevision) {
+        if (g_acceptance.step == 4 && g_pendingCollaborationEdits.empty() &&
+            GetTickCount64() - g_acceptance.brushStart > 1000 &&
+            g_collaboration->Revision() == g_acceptance.lastRevision) {
             ExportAcceptanceState("client-state.json");
             AppendAcceptanceLog("client final revision=" + std::to_string(g_collaboration->Revision()) +
                                 " fingerprint=" + AcceptanceFingerprint());
-            g_acceptanceStep = 5;
+            g_acceptance.step = 5;
         }
     }
 }
@@ -6181,25 +6147,7 @@ void OpenStartupMapIfRequested() {
 }
 
 void ConfigureAcceptanceMode() {
-    int count = 0;
-    LPWSTR* args = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (!args)
-        return;
-    for (int i = 1; i + 1 < count; ++i) {
-        const std::wstring option = args[i];
-        if (option == L"--b2-accept-host" || option == L"--b2-accept-client" || option == L"--b3-accept-host" ||
-            option == L"--b3-accept-client" || option == L"--cd-accept-host" || option == L"--cd-accept-client" ||
-            option == L"--final-accept-host" || option == L"--final-accept-client") {
-            g_acceptanceB3 = option.find(L"--b3-") == 0;
-            g_acceptanceCD = option.find(L"--cd-") == 0;
-            g_acceptanceFinal = option.find(L"--final-") == 0;
-            g_acceptanceRole =
-                option.find(L"host") != std::wstring::npos ? AcceptanceRole::Host : AcceptanceRole::Client;
-            g_acceptanceDirectory = args[i + 1];
-            break;
-        }
-    }
-    LocalFree(args);
+    acceptance_harness::ConfigureFromCommandLine(g_acceptance);
 }
 
 } // namespace
@@ -6230,8 +6178,8 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCommand) {
     OpenStartupMapIfRequested();
     ShowWindow(window, showCommand);
     UpdateWindow(window);
-    if (g_acceptanceRole != AcceptanceRole::None) {
-        const int x = g_acceptanceRole == AcceptanceRole::Host ? 0 : 720;
+    if (g_acceptance.role != acceptance_harness::Role::None) {
+        const int x = g_acceptance.role == acceptance_harness::Role::Host ? 0 : 720;
         SetWindowPos(window, nullptr, x, 20, 700, 760, SWP_NOZORDER | SWP_SHOWWINDOW);
         SetTimer(window, kAcceptanceTimer, 50, nullptr);
     }
