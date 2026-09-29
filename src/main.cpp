@@ -33,6 +33,7 @@
 #include "editor_camera.hpp"
 #include "editor_state.hpp"
 #include "edit_history.hpp"
+#include "editor/map_operations.hpp"
 #include "emf/emf_io.hpp"
 #include "graphics/gfx_assets.hpp"
 #include "model/map_document.hpp"
@@ -1382,35 +1383,7 @@ void RedoMap() {
 }
 
 bool ResizeMapDocument(MapDocument& map, int newWidth, int newHeight) {
-    newWidth = std::clamp(newWidth, 1, EO_CHAR_MAX + 1);
-    newHeight = std::clamp(newHeight, 1, EO_CHAR_MAX + 1);
-    if (newWidth == map.width && newHeight == map.height)
-        return false;
-
-    std::vector<MapTile> tiles(static_cast<std::size_t>(newWidth) * newHeight);
-    for (MapTile& tile : tiles)
-        tile.graphics[0] = map.fillTile;
-    for (int y = 0; y < std::min(newHeight, map.height); ++y) {
-        for (int x = 0; x < std::min(newWidth, map.width); ++x) {
-            tiles[static_cast<std::size_t>(y) * newWidth + x] = map.tile(x, y);
-        }
-    }
-    map.width = newWidth;
-    map.height = newHeight;
-    map.tiles = std::move(tiles);
-    std::erase_if(map.npcs, [newWidth, newHeight](const MapNpc& entity) {
-        return entity.x >= newWidth || entity.y >= newHeight;
-    });
-    std::erase_if(map.items, [newWidth, newHeight](const MapItem& entity) {
-        return entity.x >= newWidth || entity.y >= newHeight;
-    });
-    std::erase_if(map.legacyDoorKeys, [newWidth, newHeight](const MapLegacyDoorKey& entity) {
-        return entity.x >= newWidth || entity.y >= newHeight;
-    });
-    std::erase_if(map.signs, [newWidth, newHeight](const MapSign& entity) {
-        return entity.x >= newWidth || entity.y >= newHeight;
-    });
-    return true;
+    return map_operations::ResizeMap(map, newWidth, newHeight);
 }
 
 bool ResizeWouldDiscardData(const MapDocument& map, int newWidth, int newHeight) {
@@ -2158,17 +2131,7 @@ void ClearSelectedLayer() {
 }
 
 bool ClearGraphicLayerData(MapDocument& map, int layer) {
-    if (layer < 0 || layer >= 9)
-        return false;
-    const int emptyValue = layer == 0 ? map.fillTile : -1;
-    bool changed = false;
-    for (MapTile& tile : map.tiles) {
-        if (tile.graphics[layer] != emptyValue) {
-            tile.graphics[layer] = emptyValue;
-            changed = true;
-        }
-    }
-    return changed;
+    return map_operations::ClearGraphicLayer(map, layer);
 }
 
 void ClearGraphicLayer(int layer) {
@@ -2200,44 +2163,7 @@ void ClearGraphicLayer(int layer) {
 }
 
 bool ClearFlagCategoryData(MapDocument& map, int category) {
-    if (category < 0 || category >= 5)
-        return false;
-    bool changed = false;
-    for (MapTile& tile : map.tiles) {
-        switch (category) {
-        case 0:
-            if (tile.spec == 0) {
-                tile.spec = -1;
-                changed = true;
-            }
-            break;
-        case 1:
-            if (tile.warp && tile.warp->door > 0) {
-                tile.warp.reset();
-                changed = true;
-            }
-            break;
-        case 2:
-            if (tile.spec == 9) {
-                tile.spec = -1;
-                changed = true;
-            }
-            break;
-        case 3:
-            if (tile.spec >= 1 && tile.spec <= 7) {
-                tile.spec = -1;
-                changed = true;
-            }
-            break;
-        case 4:
-            if (tile.warp && tile.warp->door == 0) {
-                tile.warp.reset();
-                changed = true;
-            }
-            break;
-        }
-    }
-    return changed;
+    return map_operations::ClearFlagCategory(map, category);
 }
 
 void ClearFlagCategory(int category) {
@@ -2443,28 +2369,31 @@ bool CollaborationEditMatchesMap(const collaboration::EditOperation& operation) 
 void ApplyCollaborationEdit(const collaboration::EditOperation& operation) {
     using collaboration::EditKind;
     if (operation.kind == EditKind::Graphics) {
+        std::vector<map_operations::GraphicEdit> edits;
+        edits.reserve(operation.graphics.size());
         for (const auto& edit : operation.graphics)
-            g_map.tile(edit.x, edit.y).graphics[edit.layer] = edit.graphic;
+            edits.push_back({edit.x, edit.y, edit.layer, edit.graphic});
+        map_operations::SetTileGraphics(g_map, edits);
         return;
     }
     if (operation.kind == EditKind::Flags) {
+        std::vector<map_operations::FlagEdit> edits;
+        edits.reserve(operation.flags.size());
         for (const auto& edit : operation.flags) {
-            MapTile& tile = g_map.tile(edit.x, edit.y);
-            tile.spec = edit.spec;
+            map_operations::FlagEdit flag;
+            flag.x = edit.x;
+            flag.y = edit.y;
+            flag.spec = edit.spec;
+            flag.hasWarp = edit.hasWarp;
             if (edit.hasWarp)
-                tile.warp =
-                    MapWarp{edit.warp.destinationMap, edit.warp.x, edit.warp.y, edit.warp.level, edit.warp.door};
-            else
-                tile.warp.reset();
+                flag.warp = MapWarp{edit.warp.destinationMap, edit.warp.x, edit.warp.y, edit.warp.level, edit.warp.door};
+            edits.push_back(flag);
         }
+        map_operations::SetTileFlags(g_map, edits);
         return;
     }
     if (operation.kind == EditKind::BaseTile) {
-        const int old = g_map.fillTile;
-        g_map.fillTile = operation.baseTile;
-        for (auto& tile : g_map.tiles)
-            if (tile.graphics[0] == old || tile.graphics[0] < 0)
-                tile.graphics[0] = g_map.fillTile;
+        map_operations::SetBaseTile(g_map, operation.baseTile);
         return;
     }
     if (operation.kind == EditKind::ResizeMap) {
@@ -2482,40 +2411,23 @@ void ApplyCollaborationEdit(const collaboration::EditOperation& operation) {
         return;
     }
     if (operation.kind == EditKind::ClearAll) {
-        for (auto& tile : g_map.tiles) {
-            tile = MapTile{};
-            tile.graphics[0] = g_map.fillTile;
-        }
-        g_map.npcs.clear();
-        g_map.items.clear();
-        g_map.legacyDoorKeys.clear();
-        g_map.signs.clear();
+        map_operations::ClearAll(g_map);
         return;
     }
     for (const auto& edit : operation.entities) {
-        const int x = edit.x, y = edit.y;
-        if (edit.scopes & collaboration::EntityWarp) {
-            if (edit.hasWarp)
-                g_map.tile(x, y).warp =
-                    MapWarp{edit.warp.destinationMap, edit.warp.x, edit.warp.y, edit.warp.level, edit.warp.door};
-            else
-                g_map.tile(x, y).warp.reset();
-        }
-        if (edit.scopes & collaboration::EntitySign) {
-            std::erase_if(g_map.signs, [=](const MapSign& v) { return v.x == x && v.y == y; });
-            if (edit.hasSign)
-                g_map.signs.push_back({x, y, edit.sign.titleLength, edit.sign.encodedText});
-        }
-        if (edit.scopes & collaboration::EntityNpcs) {
-            std::erase_if(g_map.npcs, [=](const MapNpc& v) { return v.x == x && v.y == y; });
-            for (const auto& n : edit.npcs)
-                g_map.npcs.push_back({x, y, n.id, n.spawnType, n.spawnTime, n.amount});
-        }
-        if (edit.scopes & collaboration::EntityItems) {
-            std::erase_if(g_map.items, [=](const MapItem& v) { return v.x == x && v.y == y; });
-            for (const auto& i : edit.items)
-                g_map.items.push_back({x, y, i.key, i.chestSlot, i.id, i.spawnTime, static_cast<int>(i.amount)});
-        }
+        map_operations::EntityReplacement replacement;
+        replacement.x = edit.x;
+        replacement.y = edit.y;
+        replacement.scopes = edit.scopes;
+        if (edit.hasWarp)
+            replacement.warp = MapWarp{edit.warp.destinationMap, edit.warp.x, edit.warp.y, edit.warp.level, edit.warp.door};
+        if (edit.hasSign)
+            replacement.sign = MapSign{edit.x, edit.y, edit.sign.titleLength, edit.sign.encodedText};
+        for (const auto& n : edit.npcs)
+            replacement.npcs.push_back({edit.x, edit.y, n.id, n.spawnType, n.spawnTime, n.amount});
+        for (const auto& i : edit.items)
+            replacement.items.push_back({edit.x, edit.y, i.key, i.chestSlot, i.id, i.spawnTime, static_cast<int>(i.amount)});
+        map_operations::ReplaceEntitiesAt(g_map, replacement);
     }
 }
 bool CollaborationGenerationsMatch(const collaboration::EditOperation& operation) {
