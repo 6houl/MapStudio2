@@ -168,16 +168,8 @@ HFONT g_uiFont = nullptr;
 int g_cursorX = 8;
 int g_cursorY = 14;
 EditorCamera g_camera;
-int& g_viewCenterX = g_camera.centerTileX;
-int& g_viewCenterY = g_camera.centerTileY;
 EditorState g_editorState;
-int& g_paletteCategory = g_editorState.graphicsCategory;
 int g_palettePage = 0;
-int& g_selectedLayer = g_editorState.currentLayer;
-EditTool& g_editTool = g_editorState.drawTool;
-double& g_zoom = g_camera.zoom;
-double& g_panOffsetX = g_camera.offsetX;
-double& g_panOffsetY = g_camera.offsetY;
 bool g_panning = false;
 POINT g_lastPanPoint{};
 CameraNavigationKeys g_viewerNavigation{};
@@ -188,10 +180,8 @@ int g_layerScroll = 0;
 int g_layersTab = 0;
 int g_propertiesTab = 0;
 int g_toolsetTab = 0;
-int& g_flagsTab = g_editorState.flagType;
 int g_chairDirection = 1;
 MapWarp g_warpSettings{};
-int& g_brushSize = g_editorState.brushSize;
 bool g_entityMode = false;
 bool IsFlagsDomain() {
     return g_editorState.editDomain == EditDomain::Flags;
@@ -333,7 +323,7 @@ int PaletteCategoryForLayer(int layer) {
 }
 
 int PaletteBankForCurrentLayer() {
-    return kLayerBanks[std::clamp(g_selectedLayer, 0, 8)];
+    return kLayerBanks[std::clamp(g_editorState.currentLayer, 0, 8)];
 }
 
 void SetSelectedLayer(int layer) {
@@ -341,7 +331,7 @@ void SetSelectedLayer(int layer) {
     g_palettePage = 0;
     if (g_graphicsMenu)
         CheckMenuRadioItem(g_graphicsMenu, kGraphicsMenuBaseCommand, kGraphicsMenuBaseCommand + 5,
-                           kGraphicsMenuBaseCommand + g_paletteCategory, MF_BYCOMMAND);
+                           kGraphicsMenuBaseCommand + g_editorState.graphicsCategory, MF_BYCOMMAND);
 }
 
 void SetGraphicsCategory(int category) {
@@ -622,8 +612,8 @@ PaletteLayout GetPaletteLayout(const RECT& client) {
     layout.tabs =
         RECT{layout.content.left + 7, layout.content.top + 3, layout.content.right - 7, layout.content.top + 22};
     layout.gridTop = layout.content.top + 26;
-    layout.cellWidth = g_paletteCategory == 0 ? 70 : 76;
-    layout.cellHeight = g_paletteCategory == 0 ? 50 : 77;
+    layout.cellWidth = g_editorState.graphicsCategory == 0 ? 70 : 76;
+    layout.cellHeight = g_editorState.graphicsCategory == 0 ? 50 : 77;
     const int availableWidth =
         std::max(56, static_cast<int>(layout.content.right - layout.content.left - 2 * kPalettePadding));
     const int availableHeight =
@@ -695,17 +685,17 @@ void DrawMapLayer(HDC dc, const RECT& area, int layer) {
         return;
     }
     const CameraViewport viewport = CameraViewportFromRect(area);
-    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_zoom) + 8;
-    const int minX = std::max(0, g_viewCenterX - range);
-    const int maxX = std::min(g_map.width, g_viewCenterX + range + 1);
-    const int minY = std::max(0, g_viewCenterY - range);
-    const int maxY = std::min(g_map.height, g_viewCenterY + range + 1);
+    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_camera.zoom) + 8;
+    const int minX = std::max(0, g_camera.centerTileX - range);
+    const int maxX = std::min(g_map.width, g_camera.centerTileX + range + 1);
+    const int minY = std::max(0, g_camera.centerTileY - range);
+    const int maxY = std::min(g_map.height, g_camera.centerTileY + range + 1);
     const int offsetsX[] = {0, -2, -2, 0, 32, 0, 0, -24, -2};
     const int offsetsY[] = {0, -2, -2, -1, -1, -64, -32, -12, -2};
 
     for (int y = minY; y < maxY; ++y) {
         for (int x = minX; x < maxX; ++x) {
-            if (!g_layerVisible[layer] && g_selectedLayer != layer) {
+            if (!g_layerVisible[layer] && g_editorState.currentLayer != layer) {
                 continue;
             }
             const int graphic = g_map.tile(x, y).graphics[layer];
@@ -717,15 +707,15 @@ void DrawMapLayer(HDC dc, const RECT& area, int layer) {
             if (!resource.bitmap) {
                 continue;
             }
-            const int halfWidth = std::max(1, static_cast<int>(std::lround(32 * g_zoom)));
-            const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_zoom)));
-            const int spriteWidth = std::max(1, static_cast<int>(std::lround(resource.width * g_zoom)));
-            const int spriteHeight = std::max(1, static_cast<int>(std::lround(resource.height * g_zoom)));
+            const int halfWidth = std::max(1, static_cast<int>(std::lround(32 * g_camera.zoom)));
+            const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_camera.zoom)));
+            const int spriteWidth = std::max(1, static_cast<int>(std::lround(resource.width * g_camera.zoom)));
+            const int spriteHeight = std::max(1, static_cast<int>(std::lround(resource.height * g_camera.zoom)));
             const CameraPoint tileTop = g_camera.MapToScreenTop(x, y, viewport);
             const int baseX = static_cast<int>(std::lround(tileTop.x)) - halfWidth;
             const int baseY = static_cast<int>(std::lround(tileTop.y));
-            int left = baseX + static_cast<int>(std::lround(offsetsX[layer] * g_zoom));
-            int top = baseY + static_cast<int>(std::lround(offsetsY[layer] * g_zoom));
+            int left = baseX + static_cast<int>(std::lround(offsetsX[layer] * g_camera.zoom));
+            int top = baseY + static_cast<int>(std::lround(offsetsY[layer] * g_camera.zoom));
             if (layer == 1 || layer == 2 || layer == 8) {
                 left -= spriteWidth / 2 - halfWidth;
             }
@@ -821,8 +811,8 @@ void DrawRemotePresence(HDC dc, const RECT& area) {
         const COLORREF color = PresenceColor(participant->color);
         const CameraPoint projected = g_camera.MapToScreenCenter(presence.x, presence.y, viewport);
         const int cx = static_cast<int>(std::lround(projected.x)), cy = static_cast<int>(std::lround(projected.y));
-        const int hw = std::max(8, static_cast<int>(std::lround(32 * g_zoom))),
-                  hh = std::max(4, static_cast<int>(std::lround(16 * g_zoom)));
+        const int hw = std::max(8, static_cast<int>(std::lround(32 * g_camera.zoom))),
+                  hh = std::max(4, static_cast<int>(std::lround(16 * g_camera.zoom)));
         if (cx >= area.left && cx < area.right && cy >= area.top && cy < area.bottom) {
             POINT diamond[] = {{cx, cy - hh}, {cx + hw, cy}, {cx, cy + hh}, {cx - hw, cy}, {cx, cy - hh}};
             HPEN pen = CreatePen(PS_SOLID, 2, color);
@@ -861,12 +851,12 @@ void DrawMapOverlays(HDC dc, const RECT& area) {
     if (!g_map.loaded)
         return;
     const CameraViewport viewport = CameraViewportFromRect(area);
-    const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_zoom)));
-    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_zoom) + 8;
-    const int minX = std::max(0, g_viewCenterX - range);
-    const int maxX = std::min(g_map.width, g_viewCenterX + range + 1);
-    const int minY = std::max(0, g_viewCenterY - range);
-    const int maxY = std::min(g_map.height, g_viewCenterY + range + 1);
+    const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_camera.zoom)));
+    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_camera.zoom) + 8;
+    const int minX = std::max(0, g_camera.centerTileX - range);
+    const int maxX = std::min(g_map.width, g_camera.centerTileX + range + 1);
+    const int minY = std::max(0, g_camera.centerTileY - range);
+    const int maxY = std::min(g_map.height, g_camera.centerTileY + range + 1);
     const auto tileCenter = [&](int x, int y) {
         const CameraPoint point = g_camera.MapToScreenCenter(x, y, viewport);
         return POINT{static_cast<int>(std::lround(point.x)), static_cast<int>(std::lround(point.y))};
@@ -892,9 +882,9 @@ void DrawMapOverlays(HDC dc, const RECT& area) {
                 continue;
 
             const POINT center = tileCenter(x, y);
-            const int halfWidth = std::max(8, static_cast<int>(std::lround(32 * g_zoom)));
+            const int halfWidth = std::max(8, static_cast<int>(std::lround(32 * g_camera.zoom)));
             HPEN flagPen =
-                CreatePen(PS_SOLID, std::max(1, static_cast<int>(std::lround(g_zoom))), flagColors[category]);
+                CreatePen(PS_SOLID, std::max(1, static_cast<int>(std::lround(g_camera.zoom))), flagColors[category]);
             HGDIOBJ oldPen = SelectObject(dc, flagPen);
             HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
             const POINT diamond[] = {{center.x, center.y - halfHeight},
@@ -942,8 +932,8 @@ void DrawMapOverlays(HDC dc, const RECT& area) {
 }
 
 void DrawIsometricGrid(HDC dc, const RECT& area) {
-    const int halfWidth = std::max(1, static_cast<int>(std::lround(32 * g_zoom)));
-    const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_zoom)));
+    const int halfWidth = std::max(1, static_cast<int>(std::lround(32 * g_camera.zoom)));
+    const int halfHeight = std::max(1, static_cast<int>(std::lround(16 * g_camera.zoom)));
     const CameraViewport viewport = CameraViewportFromRect(area);
 
     if (!g_layerVisible[11]) {
@@ -952,11 +942,11 @@ void DrawIsometricGrid(HDC dc, const RECT& area) {
     HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(93, 164, 18));
     HGDIOBJ oldPen = SelectObject(dc, gridPen);
 
-    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_zoom) + 8;
-    const int minX = g_map.loaded ? g_viewCenterX - range : -32;
-    const int maxX = g_map.loaded ? g_viewCenterX + range + 1 : 32;
-    const int minY = g_map.loaded ? g_viewCenterY - range : -32;
-    const int maxY = g_map.loaded ? g_viewCenterY + range + 1 : 32;
+    const int range = static_cast<int>(((area.right - area.left) / 64 + (area.bottom - area.top) / 32) / g_camera.zoom) + 8;
+    const int minX = g_map.loaded ? g_camera.centerTileX - range : -32;
+    const int maxX = g_map.loaded ? g_camera.centerTileX + range + 1 : 32;
+    const int minY = g_map.loaded ? g_camera.centerTileY - range : -32;
+    const int maxY = g_map.loaded ? g_camera.centerTileY + range + 1 : 32;
     for (int y = minY; y < maxY; ++y) {
         for (int x = minX; x < maxX; ++x) {
             const bool insideMap = g_map.loaded && x >= 0 && y >= 0 && x < g_map.width && y < g_map.height;
@@ -1039,13 +1029,13 @@ void InspectFlagAtCursor(bool selectTab) {
     if (tile->warp) {
         g_warpSettings = *tile->warp;
         if (selectTab)
-            g_flagsTab = tile->warp->door > 0 ? 2 : 5;
+            g_editorState.flagType = tile->warp->door > 0 ? 2 : 5;
     } else if (tile->spec >= 1 && tile->spec <= 7) {
         g_chairDirection = tile->spec;
         if (selectTab)
-            g_flagsTab = 4;
+            g_editorState.flagType = 4;
     } else if (selectTab) {
-        g_flagsTab = tile->spec == 0 ? 1 : tile->spec == 9 ? 3 : 0;
+        g_editorState.flagType = tile->spec == 0 ? 1 : tile->spec == 9 ? 3 : 0;
     }
 }
 
@@ -1085,7 +1075,7 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
     case PanelKind::Graphics: {
         static const char* tabs[] = {"Tile", "Obj", "Mask", "Down", "Right", "Top"};
         const PaletteLayout layout = GetPaletteLayout(client);
-        DrawTabStrip(dc, layout.tabs, tabs, 6, g_paletteCategory);
+        DrawTabStrip(dc, layout.tabs, tabs, 6, g_editorState.graphicsCategory);
         const int bank = PaletteBankForCurrentLayer();
         const auto& graphicIds = g_gfx.GraphicIds(bank);
         const int pageCount =
@@ -1111,7 +1101,7 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
                 const BitmapResource resource = g_gfx.Get(bank, graphicId + 100);
                 RECT image{swatch.left + kPalettePreviewInset, swatch.top + kPalettePreviewInset,
                            swatch.right - kPalettePreviewInset, swatch.bottom - kPaletteLabelHeight};
-                DrawBitmapTransparent(dc, resource, image, g_paletteCategory != 0);
+                DrawBitmapTransparent(dc, resource, image, g_editorState.graphicsCategory != 0);
                 DrawEdge(dc, &swatch, EDGE_SUNKEN, BF_RECT);
                 if (graphicId == g_editorState.selectedGraphic()) {
                     HPEN selectionPen = CreatePen(PS_SOLID, 1, classic_ui::Selection);
@@ -1136,7 +1126,7 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
                 SelectObject(dc, previousPen);
                 DeleteObject(labelLine);
                 const std::string cellLabel =
-                    g_paletteCategory == 0 ? std::to_string(graphicId)
+                    g_editorState.graphicsCategory == 0 ? std::to_string(graphicId)
                                            : std::to_string(resource.width) + " x " + std::to_string(resource.height);
                 HGDIOBJ oldFont = g_uiFont ? SelectObject(dc, g_uiFont) : nullptr;
                 SetBkMode(dc, TRANSPARENT);
@@ -1173,7 +1163,7 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
                 const int top = firstRow + row * rowHeight;
                 RECT current{content.left + 9, top + 2, content.left + 24, top + 17};
                 DrawFrameControl(dc, &current, DFC_BUTTON,
-                                 DFCS_BUTTONRADIO | (layer == g_selectedLayer ? DFCS_CHECKED : 0));
+                                 DFCS_BUTTONRADIO | (layer == g_editorState.currentLayer ? DFCS_CHECKED : 0));
                 DrawText(dc, names[layer], RECT{content.left + 30, top + 2, content.right - 7, top + 18});
             }
         } else {
@@ -1244,21 +1234,21 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
     case PanelKind::Flags: {
         static const char* tabs[] = {"Open", "B", "D", "CT", "CR", "W"};
         DrawTabStrip(dc, RECT{content.left + 7, content.top + 3, content.right - 7, content.top + 22}, tabs, 6,
-                     g_flagsTab);
+                     g_editorState.flagType);
         const int top = content.top + 29;
-        if (g_flagsTab == 0) {
+        if (g_editorState.flagType == 0) {
             DrawText(dc, "no attributes, open tile for players",
                      RECT{content.left + 9, top + 4, content.right - 8, top + 22});
-        } else if (g_flagsTab == 1) {
+        } else if (g_editorState.flagType == 1) {
             DrawText(dc, "B   no access for players and NPCs",
                      RECT{content.left + 9, top + 4, content.right - 8, top + 22});
-        } else if (g_flagsTab == 2) {
+        } else if (g_editorState.flagType == 2) {
             DrawText(dc, "door settings", RECT{content.left + 9, top, content.right - 8, top + 18});
             DrawText(dc, "rules", RECT{content.left + 9, top + 23, content.left + 48, top + 41});
-        } else if (g_flagsTab == 3) {
+        } else if (g_editorState.flagType == 3) {
             DrawText(dc, "chest settings", RECT{content.left + 9, top, content.right - 8, top + 18});
             DrawText(dc, "rules", RECT{content.left + 9, top + 23, content.left + 48, top + 41});
-        } else if (g_flagsTab == 4) {
+        } else if (g_editorState.flagType == 4) {
             DrawText(dc, "chair settings", RECT{content.left + 9, top, content.right - 8, top + 18});
             DrawText(dc, "direction", RECT{content.left + 9, top + 23, content.left + 60, top + 41});
         } else {
@@ -1273,13 +1263,13 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
                      g_toolsetTab);
         if (g_toolsetTab == 0) {
             DrawToolRow(dc, RECT{content.left + 7, content.top + 25, content.right - 7, content.top + 47},
-                        "pencil, left click to draw", 0, g_editTool == EditTool::Pencil);
+                        "pencil, left click to draw", 0, g_editorState.drawTool == EditTool::Pencil);
             DrawToolRow(dc, RECT{content.left + 7, content.top + 50, content.right - 7, content.top + 72},
-                        "brush, left button down draw", 1, g_editTool == EditTool::Brush);
+                        "brush, left button down draw", 1, g_editorState.drawTool == EditTool::Brush);
             DrawToolRow(dc, RECT{content.left + 7, content.top + 75, content.right - 7, content.top + 97},
-                        "eraser, left click to erase", 2, g_editTool == EditTool::Eraser);
+                        "eraser, left click to erase", 2, g_editorState.drawTool == EditTool::Eraser);
             DrawToolRow(dc, RECT{content.left + 7, content.top + 100, content.right - 7, content.top + 122},
-                        "wipe, left button down erase", 3, g_editTool == EditTool::Wipe);
+                        "wipe, left button down erase", 3, g_editorState.drawTool == EditTool::Wipe);
         } else if (g_toolsetTab == 1) {
             DrawButton(dc, RECT{content.left + 7, content.top + 29, content.right - 7, content.top + 53},
                        "graphic / design mode", !IsFlagsDomain() && !g_entityMode);
@@ -1289,11 +1279,11 @@ void DrawPanelContents(HDC dc, const RECT& client, const PanelData& panel) {
                        "entity mode", g_entityMode);
         } else {
             DrawToolRow(dc, RECT{content.left + 7, content.top + 29, content.right - 7, content.top + 53},
-                        "single tile mode", 4, g_brushSize == 1);
+                        "single tile mode", 4, g_editorState.brushSize == 1);
             DrawToolRow(dc, RECT{content.left + 7, content.top + 58, content.right - 7, content.top + 82},
-                        "cluster mode 3x3", 5, g_brushSize == 3);
+                        "cluster mode 3x3", 5, g_editorState.brushSize == 3);
             DrawToolRow(dc, RECT{content.left + 7, content.top + 87, content.right - 7, content.top + 111},
-                        "no brush mode", 6, g_brushSize == 0);
+                        "no brush mode", 6, g_editorState.brushSize == 0);
         }
         break;
     }
@@ -1350,13 +1340,13 @@ void UpdateMapTitle() {
 void UpdateToolMenuChecks() {
     if (!g_toolMenu)
         return;
-    const int toolCommand = g_editTool == EditTool::Pencil ? 1310 : g_editTool == EditTool::Brush ? 1311 : 1312;
+    const int toolCommand = g_editorState.drawTool == EditTool::Pencil ? 1310 : g_editorState.drawTool == EditTool::Brush ? 1311 : 1312;
     CheckMenuRadioItem(g_toolMenu, 1310, 1312, toolCommand, MF_BYCOMMAND);
     CheckMenuRadioItem(g_toolMenu, kGraphicsModeCommand, kFlagsModeCommand,
                        g_entityMode ? 0 : (IsFlagsDomain() ? kFlagsModeCommand : kGraphicsModeCommand), MF_BYCOMMAND);
     CheckMenuItem(g_toolMenu, kEntitiesModeCommand, MF_BYCOMMAND | (g_entityMode ? MF_CHECKED : MF_UNCHECKED));
-    const int editCommand = g_brushSize == 0   ? kNoEditCommand
-                            : g_brushSize == 3 ? kClusterEditCommand
+    const int editCommand = g_editorState.brushSize == 0   ? kNoEditCommand
+                            : g_editorState.brushSize == 3 ? kClusterEditCommand
                                                : kSingleEditCommand;
     CheckMenuRadioItem(g_toolMenu, kSingleEditCommand, kNoEditCommand, editCommand, MF_BYCOMMAND);
 }
@@ -1499,8 +1489,8 @@ void ResizeMap(int newWidth, int newHeight) {
     ResizeMapDocument(g_map, newWidth, newHeight);
     g_cursorX = std::clamp(g_cursorX, 0, newWidth - 1);
     g_cursorY = std::clamp(g_cursorY, 0, newHeight - 1);
-    g_viewCenterX = std::clamp(g_viewCenterX, 0, newWidth - 1);
-    g_viewCenterY = std::clamp(g_viewCenterY, 0, newHeight - 1);
+    g_camera.centerTileX = std::clamp(g_camera.centerTileX, 0, newWidth - 1);
+    g_camera.centerTileY = std::clamp(g_camera.centerTileY, 0, newHeight - 1);
     if (!g_panels.empty())
         UpdateViewerScrollbars(g_panels[static_cast<std::size_t>(PanelKind::Viewer)]);
     g_map.dirty = true;
@@ -2055,12 +2045,12 @@ void LayoutFlagControls(HWND panel) {
 
 bool IsFlagControlVisible(HWND control) {
     if (control == g_doorRulesCombo)
-        return g_flagsTab == 2;
+        return g_editorState.flagType == 2;
     if (control == g_chestRulesCombo)
-        return g_flagsTab == 3;
+        return g_editorState.flagType == 3;
     if (control == g_chairDirectionCombo)
-        return g_flagsTab == 4;
-    return g_flagsTab == 5;
+        return g_editorState.flagType == 4;
+    return g_editorState.flagType == 5;
 }
 
 void SyncFlagControls() {
@@ -2175,13 +2165,13 @@ void CreateFlagControls(HWND panel, HINSTANCE instance) {
 void ClearSelectedLayer() {
     if (!g_map.loaded)
         return;
-    const int emptyValue = g_selectedLayer == 0 ? g_map.fillTile : -1;
+    const int emptyValue = g_editorState.currentLayer == 0 ? g_map.fillTile : -1;
     if (std::all_of(g_map.tiles.begin(), g_map.tiles.end(),
-                    [emptyValue](const MapTile& tile) { return tile.graphics[g_selectedLayer] == emptyValue; }))
+                    [emptyValue](const MapTile& tile) { return tile.graphics[g_editorState.currentLayer] == emptyValue; }))
         return;
     PushUndoSnapshot();
     for (MapTile& tile : g_map.tiles) {
-        tile.graphics[g_selectedLayer] = emptyValue;
+        tile.graphics[g_editorState.currentLayer] = emptyValue;
     }
     g_map.dirty = true;
     UpdateMapTitle();
@@ -2611,18 +2601,18 @@ void RefreshEntityDraftAfterRemote(const collaboration::EditOperation& operation
 }
 
 void ApplySelectedTool() {
-    if (g_brushSize == 0 || !g_map.loaded || g_cursorX < 0 || g_cursorY < 0 || g_cursorX >= g_map.width ||
+    if (g_editorState.brushSize == 0 || !g_map.loaded || g_cursorX < 0 || g_cursorY < 0 || g_cursorX >= g_map.width ||
         g_cursorY >= g_map.height) {
         return;
     }
 
-    const bool erasing = g_editTool == EditTool::Eraser || g_editTool == EditTool::Wipe;
-    const int replacement = erasing ? (g_selectedLayer == 0 ? g_map.fillTile : -1) : g_editorState.selectedGraphic();
-    const int radius = g_brushSize / 2;
+    const bool erasing = g_editorState.drawTool == EditTool::Eraser || g_editorState.drawTool == EditTool::Wipe;
+    const int replacement = erasing ? (g_editorState.currentLayer == 0 ? g_map.fillTile : -1) : g_editorState.selectedGraphic();
+    const int radius = g_editorState.brushSize / 2;
     bool changed = false;
     for (int y = std::max(0, g_cursorY - radius); y <= std::min(g_map.height - 1, g_cursorY + radius); ++y) {
         for (int x = std::max(0, g_cursorX - radius); x <= std::min(g_map.width - 1, g_cursorX + radius); ++x) {
-            changed |= g_map.tile(x, y).graphics[g_selectedLayer] != replacement;
+            changed |= g_map.tile(x, y).graphics[g_editorState.currentLayer] != replacement;
         }
     }
     if (!changed)
@@ -2633,7 +2623,7 @@ void ApplySelectedTool() {
     for (int y = std::max(0, g_cursorY - radius); y <= std::min(g_map.height - 1, g_cursorY + radius); ++y) {
         for (int x = std::max(0, g_cursorX - radius); x <= std::min(g_map.width - 1, g_cursorX + radius); ++x) {
             operation.graphics.push_back({static_cast<std::uint16_t>(x), static_cast<std::uint16_t>(y),
-                                          static_cast<std::uint8_t>(g_selectedLayer), replacement});
+                                          static_cast<std::uint8_t>(g_editorState.currentLayer), replacement});
         }
     }
     const auto payload = collaboration::EncodeEditOperation(operation);
@@ -2676,7 +2666,7 @@ void HandleGraphicsClick(HWND window, POINT point) {
                     static_cast<std::size_t>(g_palettePage) * layout.capacity + row * layout.columns + column;
                 if (resourceIndex < graphicIds.size()) {
                     g_editorState.selectedGraphic() = graphicIds[resourceIndex];
-                    SetSelectedLayer(g_selectedLayer);
+                    SetSelectedLayer(g_editorState.currentLayer);
                     if (g_selectingBaseTile) {
                         g_selectingBaseTile = false;
                         SetBaseTileGraphic(g_editorState.selectedGraphic());
@@ -2712,13 +2702,13 @@ void HandleToolsetClick(HWND window, POINT point) {
         g_toolsetTab = tab;
     } else if (g_toolsetTab == 0) {
         if (relativeY >= 25 && relativeY < 47)
-            g_editTool = EditTool::Pencil;
+            g_editorState.drawTool = EditTool::Pencil;
         else if (relativeY >= 50 && relativeY < 72)
-            g_editTool = EditTool::Brush;
+            g_editorState.drawTool = EditTool::Brush;
         else if (relativeY >= 75 && relativeY < 97)
-            g_editTool = EditTool::Eraser;
+            g_editorState.drawTool = EditTool::Eraser;
         else if (relativeY >= 100 && relativeY < 122)
-            g_editTool = EditTool::Wipe;
+            g_editorState.drawTool = EditTool::Wipe;
         else
             return;
     } else if (g_toolsetTab == 1) {
@@ -2732,11 +2722,11 @@ void HandleToolsetClick(HWND window, POINT point) {
             return;
     } else {
         if (relativeY >= 29 && relativeY < 53)
-            g_brushSize = 1;
+            g_editorState.brushSize = 1;
         else if (relativeY >= 58 && relativeY < 82)
-            g_brushSize = 3;
+            g_editorState.brushSize = 3;
         else if (relativeY >= 87 && relativeY < 111)
-            g_brushSize = 0;
+            g_editorState.brushSize = 0;
         else
             return;
     }
@@ -2819,14 +2809,14 @@ void ZoomAtPoint(POINT point, bool zoomIn) {
     double target = zoomIn ? kZoomLevels[std::size(kZoomLevels) - 1] : kZoomLevels[0];
     if (zoomIn) {
         for (double level : kZoomLevels) {
-            if (level > g_zoom + 0.0001) {
+            if (level > g_camera.zoom + 0.0001) {
                 target = level;
                 break;
             }
         }
     } else {
         for (std::size_t index = std::size(kZoomLevels); index > 0; --index) {
-            if (kZoomLevels[index - 1] < g_zoom - 0.0001) {
+            if (kZoomLevels[index - 1] < g_camera.zoom - 0.0001) {
                 target = kZoomLevels[index - 1];
                 break;
             }
@@ -2843,11 +2833,11 @@ void ZoomAtPoint(POINT point, bool zoomIn) {
 }
 
 void ApplyFlagToCursor() {
-    if (g_brushSize == 0 || !g_map.loaded || g_cursorX < 0 || g_cursorY < 0 || g_cursorX >= g_map.width ||
+    if (g_editorState.brushSize == 0 || !g_map.loaded || g_cursorX < 0 || g_cursorY < 0 || g_cursorX >= g_map.width ||
         g_cursorY >= g_map.height)
         return;
     const auto applyFlag = [](MapTile tile) {
-        switch (g_flagsTab) {
+        switch (g_editorState.flagType) {
         case 0:
             tile.spec = -1;
             tile.warp.reset();
@@ -2872,7 +2862,7 @@ void ApplyFlagToCursor() {
         }
         return tile;
     };
-    const int radius = g_brushSize / 2;
+    const int radius = g_editorState.brushSize / 2;
     bool changed = false;
     for (int y = std::max(0, g_cursorY - radius); y <= std::min(g_map.height - 1, g_cursorY + radius); ++y) {
         for (int x = std::max(0, g_cursorX - radius); x <= std::min(g_map.width - 1, g_cursorX + radius); ++x) {
@@ -2920,7 +2910,7 @@ void UpdateWarpAtCursorFromSettings() {
     if (!tile || !tile->warp)
         return;
     MapWarp updated = g_warpSettings;
-    updated.door = g_flagsTab == 2 ? std::max(1, updated.door) : 0;
+    updated.door = g_editorState.flagType == 2 ? std::max(1, updated.door) : 0;
     if (*tile->warp == updated)
         return;
     collaboration::EditOperation operation;
@@ -2954,8 +2944,8 @@ void HandleFlagsClick(HWND window, POINT point) {
     GetClientRect(window, &client);
     RECT tabs{10, kTitleHeight + 6, client.right - 10, kTitleHeight + 25};
     if (const int tab = classic_ui::HitTestTabs(tabs, 6, point); tab >= 0) {
-        g_flagsTab = tab;
-        if (g_flagsTab == 2)
+        g_editorState.flagType = tab;
+        if (g_editorState.flagType == 2)
             g_warpSettings.door = std::max(1, g_warpSettings.door);
         SyncFlagControls();
         InvalidatePanels();
@@ -3171,8 +3161,8 @@ LRESULT CALLBACK PanelProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
             }
             for (const auto& hit : g_presenceHits)
                 if (PtInRect(&hit.bounds, point)) {
-                    g_viewCenterX = hit.x;
-                    g_viewCenterY = hit.y;
+                    g_camera.centerTileX = hit.x;
+                    g_camera.centerTileY = hit.y;
                     g_camera.centerTileX = hit.x;
                     g_camera.centerTileY = hit.y;
                     g_camera.offsetX = 0;
@@ -3420,7 +3410,7 @@ LRESULT CALLBACK PanelProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
                     InvalidateRect(g_panels[static_cast<std::size_t>(PanelKind::Flags)], nullptr, FALSE);
                 }
             }
-            if ((wParam & MK_LBUTTON) && (g_editTool == EditTool::Brush || g_editTool == EditTool::Wipe)) {
+            if ((wParam & MK_LBUTTON) && (g_editorState.drawTool == EditTool::Brush || g_editorState.drawTool == EditTool::Wipe)) {
                 if (IsFlagsDomain())
                     ApplyFlagToCursor();
                 else
@@ -3460,7 +3450,7 @@ LRESULT CALLBACK PanelProc(HWND window, UINT message, WPARAM wParam, LPARAM lPar
         if (panel && panel->kind == PanelKind::Graphics) {
             RECT client{};
             GetClientRect(window, &client);
-            const int pages = PalettePageCount(g_paletteCategory, GetPaletteLayout(client).capacity);
+            const int pages = PalettePageCount(g_editorState.graphicsCategory, GetPaletteLayout(client).capacity);
             g_palettePage = std::clamp(g_palettePage + (GET_WHEEL_DELTA_WPARAM(wParam) < 0 ? 1 : -1), 0, pages - 1);
             InvalidatePanels();
             return 0;
@@ -3995,8 +3985,8 @@ void OpenMap(HWND owner) {
         g_map = std::move(loadedMap);
         g_cursorX = std::min(8, g_map.width - 1);
         g_cursorY = std::min(14, g_map.height - 1);
-        g_viewCenterX = g_cursorX;
-        g_viewCenterY = g_cursorY;
+        g_camera.centerTileX = g_cursorX;
+        g_camera.centerTileY = g_cursorY;
         g_camera.offsetX = 0.0;
         g_camera.offsetY = 0.0;
         g_camera.zoom = 1.0;
@@ -4265,7 +4255,7 @@ void CreateMenuBar(HWND window) {
     }
     AppendMenuA(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(g_graphicsMenu), "Graphics");
     CheckMenuRadioItem(g_graphicsMenu, kGraphicsMenuBaseCommand, kGraphicsMenuBaseCommand + 5,
-                       kGraphicsMenuBaseCommand + g_paletteCategory, MF_BYCOMMAND);
+                       kGraphicsMenuBaseCommand + g_editorState.graphicsCategory, MF_BYCOMMAND);
 
     g_viewMenu = CreatePopupMenu();
     AppendMenuA(g_viewMenu, MF_STRING, kToggleAllLayersCommand, "Toggle all layers\tF1");
@@ -4366,8 +4356,8 @@ void CreateNewMap(HWND owner) {
     g_map = std::move(map);
     g_cursorX = 8;
     g_cursorY = 14;
-    g_viewCenterX = 8;
-    g_viewCenterY = 14;
+    g_camera.centerTileX = 8;
+    g_camera.centerTileY = 14;
     g_camera.offsetX = 0.0;
     g_camera.offsetY = 0.0;
     g_camera.zoom = 1.0;
@@ -4827,17 +4817,17 @@ void ExportAcceptanceState(const char* name) {
          << ", \"items\": " << g_map.items.size() << ", \"signs\": " << g_map.signs.size()
          << ",\n  \"pending\": " << g_pendingCollaborationEdits.size()
          << ", \"pendingHighWater\": " << g_acceptancePendingHigh << ",\n  \"submitted\": " << g_acceptanceSubmitted
-         << ",\n  \"ui\": {\"graphicsCategory\": " << g_paletteCategory << ", \"layer\": " << g_selectedLayer
-         << ", \"tool\": " << static_cast<int>(g_editTool) << ", \"brush\": " << g_brushSize
-         << ", \"flagsPage\": " << g_flagsTab << ", \"zoom\": " << g_zoom << ", \"cameraX\": " << g_camera.offsetX
+         << ",\n  \"ui\": {\"graphicsCategory\": " << g_editorState.graphicsCategory << ", \"layer\": " << g_editorState.currentLayer
+         << ", \"tool\": " << static_cast<int>(g_editorState.drawTool) << ", \"brush\": " << g_editorState.brushSize
+         << ", \"flagsPage\": " << g_editorState.flagType << ", \"zoom\": " << g_camera.zoom << ", \"cameraX\": " << g_camera.offsetX
          << ", \"cameraY\": " << g_camera.offsetY << "}\n}\n";
     WriteAcceptanceArtifact(name, json.str());
 }
 void AcceptanceGraphic(int x, int y, int layer, int graphic, int brush = 1) {
     SetSelectedLayer(layer);
     g_editorState.selectedGraphic() = graphic;
-    g_brushSize = brush;
-    g_editTool = EditTool::Brush;
+    g_editorState.brushSize = brush;
+    g_editorState.drawTool = EditTool::Brush;
     g_cursorX = x;
     g_cursorY = y;
     const auto before = g_collaboration->Revision();
@@ -4847,8 +4837,8 @@ void AcceptanceGraphic(int x, int y, int layer, int graphic, int brush = 1) {
     g_acceptancePendingHigh = std::max(g_acceptancePendingHigh, g_pendingCollaborationEdits.size());
 }
 void AcceptanceFlag(int x, int y, int page) {
-    g_brushSize = 1;
-    g_flagsTab = page;
+    g_editorState.brushSize = 1;
+    g_editorState.flagType = page;
     g_cursorX = x;
     g_cursorY = y;
     ApplyFlagToCursor();
@@ -4937,7 +4927,7 @@ void RunB3AcceptanceStep() {
         if (g_acceptanceStep == 0) {
             SetGraphicsCategory(0);
             g_editorState.selectedGraphic() = 4;
-            g_editTool = EditTool::Pencil;
+            g_editorState.drawTool = EditTool::Pencil;
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "HarnessClient", "", 39121}, error)) {
                 AppendAcceptanceLog("B3 client connecting");
@@ -5604,8 +5594,8 @@ void RunAcceptanceStep() {
         if (g_acceptanceStep == 0) {
             SetGraphicsCategory(0);
             g_editorState.selectedGraphic() = 2;
-            g_editTool = EditTool::Pencil;
-            g_brushSize = 1;
+            g_editorState.drawTool = EditTool::Pencil;
+            g_editorState.brushSize = 1;
             std::string error;
             if (g_collaboration->Connect({"127.0.0.1", "HarnessClient", "", 39120}, error)) {
                 AppendAcceptanceLog("client connecting");
@@ -5673,12 +5663,12 @@ void ExecuteCommand(HWND window, int command) {
             "Endless Online\nMapper Studio Reconstruction\n\nBuilt as a modern reconstruction of the original editor.",
             "About Endless Map Studio", MB_OK | MB_ICONINFORMATION);
     else if (command == kOverviewCommand) {
-        g_zoom = 1.0;
-        g_panOffsetX = 0.0;
-        g_panOffsetY = 0.0;
+        g_camera.zoom = 1.0;
+        g_camera.offsetX = 0.0;
+        g_camera.offsetY = 0.0;
         if (g_map.loaded) {
-            g_viewCenterX = g_map.width / 2;
-            g_viewCenterY = g_map.height / 2;
+            g_camera.centerTileX = g_map.width / 2;
+            g_camera.centerTileY = g_map.height / 2;
         }
         UpdateViewerScrollbars(g_panels[static_cast<std::size_t>(PanelKind::Viewer)]);
         InvalidatePanels();
@@ -5732,9 +5722,9 @@ void ExecuteCommand(HWND window, int command) {
         ZoomAtPoint(POINT{(canvas.left + canvas.right) / 2, (canvas.top + canvas.bottom) / 2},
                     command == kZoomInCommand);
     } else if (command == kZoomResetCommand) {
-        g_zoom = 1.0;
-        g_panOffsetX = 0;
-        g_panOffsetY = 0;
+        g_camera.zoom = 1.0;
+        g_camera.offsetX = 0;
+        g_camera.offsetY = 0;
         UpdateViewerScrollbars(g_panels[static_cast<std::size_t>(PanelKind::Viewer)]);
         InvalidateRect(g_panels[static_cast<std::size_t>(PanelKind::Viewer)], nullptr, FALSE);
     } else if (command >= kPanelBaseCommand && command < kPanelBaseCommand + static_cast<int>(g_panels.size())) {
@@ -5765,13 +5755,13 @@ void ExecuteCommand(HWND window, int command) {
         if (!g_collaboration || g_collaboration->State() == collaboration::SessionState::Disconnected)
             RedoMap();
     } else if (command == 1310)
-        g_editTool = EditTool::Pencil;
+        g_editorState.drawTool = EditTool::Pencil;
     else if (command == 1311)
-        g_editTool = EditTool::Brush;
+        g_editorState.drawTool = EditTool::Brush;
     else if (command == 1312)
-        g_editTool = EditTool::Eraser;
+        g_editorState.drawTool = EditTool::Eraser;
     else if (command == 1313)
-        g_editTool = EditTool::Wipe;
+        g_editorState.drawTool = EditTool::Wipe;
     else if (command == 1314 || command == kGraphicsModeCommand) {
         SetEditDomain(false);
         ShowWindow(g_panels[static_cast<std::size_t>(PanelKind::Graphics)], SW_SHOW);
@@ -5791,11 +5781,11 @@ void ExecuteCommand(HWND window, int command) {
         EnsureEditorWindowZOrder(entities);
         SyncEntityControls();
     } else if (command == kSingleEditCommand)
-        g_brushSize = 1;
+        g_editorState.brushSize = 1;
     else if (command == kClusterEditCommand)
-        g_brushSize = 3;
+        g_editorState.brushSize = 3;
     else if (command == kNoEditCommand)
-        g_brushSize = 0;
+        g_editorState.brushSize = 0;
     if ((command >= 1310 && command <= 1315) || (command >= kSingleEditCommand && command <= kFlagsModeCommand) ||
         command == kEntitiesModeCommand) {
         UpdateToolMenuChecks();
